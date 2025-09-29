@@ -14,6 +14,7 @@ import (
 	_ "github.com/sijms/go-ora/v2"
 
 	"sql-learn2/csvdb"
+	csvdbappend "sql-learn2/csvdb-append"
 )
 
 func main() {
@@ -26,8 +27,37 @@ func main() {
 	service := flag.String("service", defaultString(os.Getenv("ORA_SERVICE"), "XE"), "Oracle service name (e.g., XE or XEPDB1)")
 	dsn := flag.String("dsn", os.Getenv("ORA_DSN"), "Oracle DSN (oracle://user:pass@host:port/service). If set, overrides other connection flags.")
 	timeout := flag.Duration("timeout", parseDurationEnv("ORA_TIMEOUT", 60*time.Second), "Context timeout for operations")
+	upsert := flag.Bool("upsert", false, "Use upsert mode: merge CSV rows into existing table")
+	keys := flag.String("keys", strings.TrimSpace(os.Getenv("CSV_KEYS")), "Comma-separated key columns for upsert (e.g., ID,FIRST_NAME)")
+	table := flag.String("table", strings.TrimSpace(os.Getenv("CSV_TABLE")), "Target table name. Defaults to CSV filename as table name.")
+	sample := flag.String("sample", strings.TrimSpace(os.Getenv("CSV_SAMPLE")), "Quick preset for CSV: 'example' or 'append'. If set, overrides -csv.")
 	flag.Parse()
 
+	// Apply sample preset for quick switching between CSVs
+	switch strings.ToLower(strings.TrimSpace(*sample)) {
+	case "example":
+		*csvPath = "example.csv"
+		log.Printf("Preset: sample=example -> CSV %s", *csvPath)
+	case "append":
+		*csvPath = "example_append.csv"
+		log.Printf("Preset: sample=append -> CSV %s", *csvPath)
+		// For convenience in append tests: if user chose upsert but didn't provide table/keys, set sensible defaults
+		if *upsert && strings.TrimSpace(*table) == "" {
+			*table = normalizeIdentifierForOracle("example") // upsert into EXAMPLE
+			log.Printf("Preset default: -table set to %s (override with -table)", *table)
+		}
+		if *upsert && strings.TrimSpace(*keys) == "" {
+			*keys = "ID,FIRST_NAME"
+			log.Printf("Preset default: -keys set to %s (override with -keys)", *keys)
+		}
+	case "":
+		// no preset used
+	default:
+		log.Fatalf("invalid -sample value: %s (use 'example' or 'append')", *sample)
+	}
+
+	totalSteps := 6
+	step(1, totalSteps, "Resolve connection DSN")
 	// Resolve DSN
 	connString := *dsn
 	if connString == "" {
@@ -37,6 +67,7 @@ func main() {
 		connString = fmt.Sprintf("oracle://%s:%s@%s:%s/%s", urlEncode(*user), urlEncode(*pass), *host, *port, *service)
 	}
 
+	step(2, totalSteps, "Connect to Oracle")
 	// Open DB
 	db, err := sql.Open("oracle", connString)
 	if err != nil {
@@ -50,8 +81,9 @@ func main() {
 	if err := db.PingContext(ctx); err != nil {
 		log.Fatalf("ping oracle: %v", err)
 	}
-	log.Printf("Connected to Oracle: %s", redacted(connString))
+	log.Printf("Connected: %s", redacted(connString))
 
+	step(3, totalSteps, "Prepare CSV path")
 	// Load CSV
 	absCSV := *csvPath
 	if !filepath.IsAbs(absCSV) {
@@ -63,18 +95,54 @@ func main() {
 		log.Fatalf("csv not accessible: %v", err)
 	}
 
-	if err := csvdb.LoadCSVToDB(ctx, db, absCSV); err != nil {
-		log.Fatalf("load csv: %v", err)
+	step(4, totalSteps, "Determine target table name")
+	// Determine target table name
+	tableName := normalizeIdentifierForOracle(strings.TrimSuffix(filepath.Base(absCSV), filepath.Ext(absCSV)))
+	if strings.TrimSpace(*table) != "" {
+		tableName = normalizeIdentifierForOracle(*table)
 	}
 
+	step(5, totalSteps, "Run operation")
+	if *upsert {
+		// Parse key columns
+		kstr := strings.TrimSpace(*keys)
+		if kstr == "" {
+			log.Fatalf("upsert mode requires -keys (comma-separated key columns)")
+		}
+		parts := strings.Split(kstr, ",")
+		keyCols := make([]string, 0, len(parts))
+		for _, p := range parts {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				keyCols = append(keyCols, p)
+			}
+		}
+		if len(keyCols) == 0 {
+			log.Fatalf("no valid key columns parsed from -keys")
+		}
+		log.Printf("Summary: UPSERT into %s using keys [%s] from %s", tableName, strings.Join(keyCols, ", "), absCSV)
+		if err := csvdbappend.UpsertCSVToDB(ctx, db, absCSV, tableName, keyCols); err != nil {
+			log.Fatalf("upsert csv: %v", err)
+		}
+	} else {
+		log.Printf("Summary: LOAD into %s from %s", tableName, absCSV)
+		if err := csvdb.LoadCSVToDBAs(ctx, db, absCSV, tableName); err != nil {
+			log.Fatalf("load csv: %v", err)
+		}
+	}
+
+	step(6, totalSteps, "Verify row count")
 	// Verify by counting rows
-	tableName := normalizeIdentifierForOracle(strings.TrimSuffix(filepath.Base(absCSV), filepath.Ext(absCSV)))
 	var cnt int64
 	qry := fmt.Sprintf("SELECT COUNT(1) FROM %s", tableName)
 	if err := db.QueryRowContext(ctx, qry).Scan(&cnt); err != nil {
 		log.Printf("verify count failed: %v", err)
 	} else {
-		log.Printf("Loaded %d rows into table %s", cnt, tableName)
+		mode := "Loaded"
+		if *upsert {
+			mode = "Upserted/Inserted"
+		}
+		log.Printf("%s rows into table %s (total now: %d)", mode, tableName, cnt)
 	}
 }
 
@@ -142,4 +210,8 @@ func normalizeIdentifierForOracle(s string) string {
 		upper = upper[:30]
 	}
 	return upper
+}
+
+func step(n, total int, title string) {
+	log.Printf("[%d/%d] %s", n, total, title)
 }

@@ -33,6 +33,12 @@ import (
 // - NUMBER values are parsed into int64 or float64 when possible; empty string => NULL.
 // - Other types are passed as strings; empty string => NULL.
 func LoadCSVToDB(ctx context.Context, db *sql.DB, csvPath string) error {
+	return LoadCSVToDBAs(ctx, db, csvPath, "")
+}
+
+// LoadCSVToDBAs reads a CSV file and creates a table based on its content, then loads data.
+// If tableName is non-empty, it overrides the table name derived from the CSV filename.
+func LoadCSVToDBAs(ctx context.Context, db *sql.DB, csvPath, tableName string) error {
 	if db == nil {
 		return errors.New("db is nil")
 	}
@@ -90,12 +96,20 @@ func LoadCSVToDB(ctx context.Context, db *sql.DB, csvPath string) error {
 		return fmt.Errorf("types row has fewer cells (%d) than headers (%d)", len(typesRow), len(headers))
 	}
 
-	// Derive table name from file name
-	base := filepath.Base(csvPath)
-	name := strings.TrimSuffix(base, filepath.Ext(base))
-	tableName := normalizeIdentifierForOracle(name)
-	if tableName == "" {
-		return fmt.Errorf("cannot derive valid table name from file: %s", base)
+	// Resolve target table name (parameter wins; fallback to file name)
+	resolvedTable := ""
+	if strings.TrimSpace(tableName) != "" {
+		resolvedTable = normalizeIdentifierForOracle(tableName)
+		if resolvedTable == "" {
+			return fmt.Errorf("invalid table name: %q", tableName)
+		}
+	} else {
+		base := filepath.Base(csvPath)
+		name := strings.TrimSuffix(base, filepath.Ext(base))
+		resolvedTable = normalizeIdentifierForOracle(name)
+		if resolvedTable == "" {
+			return fmt.Errorf("cannot derive valid table name from file: %s", base)
+		}
 	}
 
 	// Build column defs
@@ -132,7 +146,7 @@ func LoadCSVToDB(ctx context.Context, db *sql.DB, csvPath string) error {
 	}
 
 	// Create or replace table via dynamic package
-	if err := dynamic.CreateOrReplaceTable(ctx, db, tableName, cols); err != nil {
+	if err := dynamic.CreateOrReplaceTable(ctx, db, resolvedTable, cols); err != nil {
 		return err
 	}
 
@@ -148,7 +162,7 @@ func LoadCSVToDB(ctx context.Context, db *sql.DB, csvPath string) error {
 	for i := range placeholders {
 		placeholders[i] = fmt.Sprintf(":%d", i+1)
 	}
-	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", tableName, strings.Join(oracleCols, ", "), strings.Join(placeholders, ", "))
+	insertSQL := fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)", resolvedTable, strings.Join(oracleCols, ", "), strings.Join(placeholders, ", "))
 
 	stmt, err := db.PrepareContext(ctx, insertSQL)
 	if err != nil {
