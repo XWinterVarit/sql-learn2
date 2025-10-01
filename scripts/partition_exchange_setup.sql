@@ -34,7 +34,8 @@ CREATE TABLE EXAMPLE_MASTER (
   FIRST_NAME  VARCHAR2(100),
   LAST_NAME   VARCHAR2(100),
   AGE         NUMBER,
-  SALARY      NUMBER
+  SALARY      NUMBER,
+  CREATED_AT  TIMESTAMP
 )
 -- Using LIST partitioning with DEFAULT partition named PDATA
 -- This ensures the partition has the explicit name referenced in the exchange script
@@ -58,13 +59,17 @@ CREATE INDEX EXAMPLE_MASTER_SALARY_IDX ON EXAMPLE_MASTER (SALARY);
 -- Global index on AGE (requires special handling during partition exchange)
 CREATE INDEX EXAMPLE_MASTER_AGE_IDX ON EXAMPLE_MASTER (AGE);
 
+-- Index on CREATED_AT for time-based queries and reports
+CREATE INDEX EXAMPLE_MASTER_CREATED_IDX ON EXAMPLE_MASTER (CREATED_AT);
+
 PROMPT === Create compatible non-partitioned staging table ===
 CREATE TABLE EXAMPLE_STAGING (
   ID          NUMBER PRIMARY KEY,
   FIRST_NAME  VARCHAR2(100),
   LAST_NAME   VARCHAR2(100),
   AGE         NUMBER,
-  SALARY      NUMBER
+  SALARY      NUMBER,
+  CREATED_AT  TIMESTAMP
 );
 
 PROMPT === Create indexes on staging table ===
@@ -82,6 +87,9 @@ CREATE INDEX EXAMPLE_STAGING_SALARY_IDX ON EXAMPLE_STAGING (SALARY);
 
 -- Index on AGE (matches global index in master)
 CREATE INDEX EXAMPLE_STAGING_AGE_IDX ON EXAMPLE_STAGING (AGE);
+
+-- Index on CREATED_AT for time-based queries (matches index in master)
+CREATE INDEX EXAMPLE_STAGING_CREATED_IDX ON EXAMPLE_STAGING (CREATED_AT);
 
 PROMPT === Setup complete. Next, run scripts/partition_exchange_test_exchange.sql to load sample data and perform the exchange. ===
 -- EXIT command removed to prevent issues in SQLcl

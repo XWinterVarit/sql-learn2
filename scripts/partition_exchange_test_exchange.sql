@@ -21,11 +21,27 @@
 --
 -- Note: In SQLcl/SQL*Plus, use '/' only to execute PL/SQL blocks; do not place it after DDL terminated by ';'.
 --
+PROMPT === Rebuild indexes on staging table to ensure they are usable ===
+-- Rebuild all indexes on staging table to fix ORA-01502 errors
+-- This addresses the "ORA-01502: index or partition of such index is in unusable state" error
+-- that can occur when attempting to insert into the staging table.
+-- After partition exchanges or certain DDL operations, indexes (especially system-generated
+-- primary key indexes like SYS_C009072) may become unusable. This block rebuilds all indexes
+-- on the staging table to ensure they're valid before attempting inserts.
+BEGIN
+  FOR idx IN (SELECT index_name FROM user_indexes WHERE table_name = 'EXAMPLE_STAGING') LOOP
+    EXECUTE IMMEDIATE 'ALTER INDEX ' || idx.index_name || ' REBUILD';
+  END LOOP;
+END;
+/
+-- Ensure transaction is complete before continuing
+COMMIT;
+
 PROMPT === Load sample rows into staging for partition exchange ===
-INSERT INTO EXAMPLE_STAGING (ID, FIRST_NAME, LAST_NAME, AGE, SALARY)
-VALUES (1, 'ALICE', 'ADAMS', 30, 90000);
-INSERT INTO EXAMPLE_STAGING (ID, FIRST_NAME, LAST_NAME, AGE, SALARY)
-VALUES (2, 'BOB', 'BROWN', 28, 70000);
+INSERT INTO EXAMPLE_STAGING (ID, FIRST_NAME, LAST_NAME, AGE, SALARY, CREATED_AT)
+VALUES (1, 'ALICE', 'ADAMS', 30, 90000, CURRENT_TIMESTAMP);
+INSERT INTO EXAMPLE_STAGING (ID, FIRST_NAME, LAST_NAME, AGE, SALARY, CREATED_AT)
+VALUES (2, 'BOB', 'BROWN', 28, 70000, CURRENT_TIMESTAMP);
 COMMIT;
 
 PROMPT === Verify counts before exchange ===
@@ -41,7 +57,7 @@ PROMPT === Perform EXCHANGE PARTITION (moves staging rows into master partition;
 ALTER TABLE EXAMPLE_MASTER
     EXCHANGE PARTITION PDATA
     WITH TABLE EXAMPLE_STAGING
-    UPDATE GLOBAL INDEXES;
+    WITHOUT VALIDATION;
   
 -- Add explicit COMMIT after exchange to ensure transaction is complete
 COMMIT;
@@ -50,8 +66,14 @@ PROMPT === Verify counts after exchange ===
 SELECT COUNT(*) AS CNT FROM EXAMPLE_MASTER PARTITION (PDATA);
 SELECT COUNT(*) AS CNT FROM EXAMPLE_STAGING;
 
--- Optional: Inspect rows
--- SELECT * FROM EXAMPLE_MASTER PARTITION (PDATA) ORDER BY ID;
+-- Display rows with datetime values to verify exchange
+PROMPT === Display rows with datetime values to verify exchange ===
+COLUMN CREATED_AT FORMAT A30
+SELECT ID, FIRST_NAME, LAST_NAME, CREATED_AT 
+FROM EXAMPLE_MASTER PARTITION (PDATA)
+ORDER BY ID;
+
+-- Optional: Inspect all fields in staging table
 -- SELECT * FROM EXAMPLE_STAGING ORDER BY ID;
 
 PROMPT === Optional cleanup: Truncate staging to discard old data ===
