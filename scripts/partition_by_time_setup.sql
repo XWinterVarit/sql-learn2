@@ -9,10 +9,11 @@
 --   PARTITION BY : RANGE on COMMITTED_AT (timestamp column)
 --
 -- PARTITION STRATEGY:
--- This example uses INTERVAL partitioning for automatic partition creation:
+-- This example uses RANGE partitioning with string-based timestamps:
 --   - DBA creates the table with one initial partition (ONE-TIME SETUP)
---   - Oracle automatically creates new monthly partitions as data arrives
---   - No need to manually create partitions for future dates
+--   - New partitions created explicitly for each timestamp at SECOND granularity
+--   - Extremely fine-grained partitioning at the second level
+--   - Format: "YYYYMMDD HH:MI:SS" for precise partition control
 --
 -- INDEX INFORMATION:
 --   - Primary key on ID column
@@ -27,22 +28,21 @@ BEGIN
 EXCEPTION WHEN OTHERS THEN IF SQLCODE != -942 THEN RAISE; END IF; END;
 /
 
-PROMPT === Create interval-partitioned table by committed date and time ===
+PROMPT === Create interval-partitioned table by committed date and time (second-level granularity) ===
 CREATE TABLE TIME_PARTITIONED_DATA (
   ID            NUMBER PRIMARY KEY,
   DATA_VALUE    VARCHAR2(200),
   DESCRIPTION   VARCHAR2(500),
   STATUS        VARCHAR2(50),
-  COMMITTED_AT  TIMESTAMP NOT NULL
+  COMMITTED_AT  VARCHAR2(19) NOT NULL  -- Format: YYYYMMDD HH:MI:SS
 )
--- Using INTERVAL partitioning on COMMITTED_AT timestamp
--- Oracle automatically creates new monthly partitions as data arrives
--- DBA only needs to create this table ONCE - no future partition management needed!
+-- Using RANGE partitioning on COMMITTED_AT string column
+-- Partitioning at the second level for extremely fine granularity
+-- DBA only needs to create this table ONCE - partition management automated in test script
 PARTITION BY RANGE (COMMITTED_AT)
-INTERVAL (NUMTOYMINTERVAL(1, 'MONTH'))
 (
-  -- Initial partition - Oracle will create new partitions automatically for later dates
-  PARTITION P_INITIAL VALUES LESS THAN (TIMESTAMP '2024-01-01 00:00:00')
+  -- Initial partition - New partitions will be created dynamically in the test script
+  PARTITION P_INITIAL VALUES LESS THAN ('20240101 00:00:00')
 );
 
 PROMPT === Create indexes on partitioned table ===

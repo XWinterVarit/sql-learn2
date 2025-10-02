@@ -17,7 +17,7 @@
 -- Note: In SQLcl/SQL*Plus, use '/' only to execute PL/SQL blocks; do not place it after DDL terminated by ';'.
 --
 -- No deletion here to maintain data availability
--- Old data will be removed after new data is inserted
+-- Old data will be removed after new data is safely inserted
 
 -- First, check the table structure 
 PROMPT === Verifying table structure ===
@@ -62,8 +62,6 @@ BEGIN
   DBMS_OUTPUT.PUT_LINE('Creating new partition at second granularity: ' || v_next_partition);
   DBMS_OUTPUT.PUT_LINE('Using timestamp: ' || v_commit_str);
   DBMS_OUTPUT.PUT_LINE('High value: ' || v_high_value);
-  
-  -- For debugging - display the full SQL
   DBMS_OUTPUT.PUT_LINE('SQL: ' || v_sql);
   
   BEGIN
