@@ -10,7 +10,7 @@ sql LEARN1/Welcome@localhost:1521/XE @/Users/cheevaritrodnuson/GolandProjects/sq
 
 This will:
 1. Set up the table structure (partition_by_time_setup.sql)
-2. Insert test data for 5 days (partition_by_time_insert_5_days.sql)
+2. Insert test data with single commit datetime (partition_by_time_insert_single_commit.sql)
 
 ## Additional Operations
 
@@ -23,7 +23,7 @@ To enable these operations, edit run_partition_time_test.sql and uncomment the r
 ## Script Files
 
 - `partition_by_time_setup.sql`: Creates the partitioned table structure
-- `partition_by_time_insert_5_days.sql`: Inserts 5 batches of data across 5 days
+- `partition_by_time_insert_single_commit.sql`: Inserts multiple rows with single commit datetime
 - `partition_by_time_drop_old_partitions.sql`: Drops older partitions, keeping only the latest
 - `partition_by_time_drop_all_5_days.sql`: Drops ALL daily partitions (reset)
 - `run_partition_time_test.sql`: Wrapper script that executes the above scripts

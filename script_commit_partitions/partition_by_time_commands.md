@@ -111,11 +111,11 @@ ORDER BY partition_position;
 - `WHERE table_name = 'TIME_PARTITIONED_DATA'` - Filters to only our table
 - `ORDER BY partition_position` - Sorts results by the partition's position in the table
 
-## Insert 5 Days Script
+## Insert Single Commit Script
 
-**File: partition_by_time_insert_5_days.sql**
+**File: partition_by_time_insert_single_commit.sql**
 
-This script inserts 5 batches of data, one batch per day for the current day and the previous 4 days.
+This script inserts multiple rows (e.g., 10 rows) all with the same commit datetime.
 
 ### Verify Table Structure
 
@@ -129,40 +129,46 @@ SELECT table_name, partitioned FROM user_tables WHERE table_name = 'TIME_PARTITI
 - `partitioned` - Column indicating if the table is partitioned (YES/NO)
 - `WHERE table_name = 'TIME_PARTITIONED_DATA'` - Filters to only our table
 
-### PL/SQL Block for Inserting 5 Days of Data
+### PL/SQL Block for Inserting Rows with Single Commit
 
 ```sql
 DECLARE
-  v_rows_per_batch CONSTANT PLS_INTEGER := 4; -- keep small for demo; raise as needed
-  v_day_offset      PLS_INTEGER;
+  v_total_rows CONSTANT PLS_INTEGER := 10; -- adjust as needed (e.g., 10, 20, 100...)
   v_commit_time     DATE;
   v_next_id         NUMBER;
 BEGIN
-  FOR v_day_offset IN 0..4 LOOP
-    -- Commit time set to TRUNC(SYSDATE) - v_day_offset at 10:00:00 for determinism
-    v_commit_time := TRUNC(SYSDATE) - v_day_offset + (10/24);
+  -- Parse commit datetime from substitution variable, or use SYSDATE if not provided
+  BEGIN
+    v_commit_time := TO_DATE('&commit_datetime', 'YYYY-MM-DD HH24:MI:SS');
+    DBMS_OUTPUT.PUT_LINE('Using provided commit datetime: ' || TO_CHAR(v_commit_time, 'YYYY-MM-DD HH24:MI:SS'));
+  EXCEPTION
+    WHEN OTHERS THEN
+      v_commit_time := SYSDATE;
+      DBMS_OUTPUT.PUT_LINE('Using current SYSDATE as commit datetime: ' || TO_CHAR(v_commit_time, 'YYYY-MM-DD HH24:MI:SS'));
+  END;
 
-    -- Compute next starting ID to avoid conflicts
-    SELECT NVL(MAX(ID), 0) + 1 INTO v_next_id FROM TIME_PARTITIONED_DATA;
+  -- Get starting ID
+  SELECT NVL(MAX(ID), 0) + 1 INTO v_next_id FROM TIME_PARTITIONED_DATA;
 
-    DBMS_OUTPUT.PUT_LINE('Inserting batch for day offset ' || v_day_offset ||
-                         ' at ' || TO_CHAR(v_commit_time, 'YYYY-MM-DD HH24:MI:SS'));
+  DBMS_OUTPUT.PUT_LINE('Inserting ' || v_total_rows || ' rows...');
 
-    -- Insert v_rows_per_batch rows
-    FOR i IN 0..(v_rows_per_batch - 1) LOOP
-      INSERT INTO TIME_PARTITIONED_DATA (ID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
-      VALUES (
-        v_next_id + i,
-        'BATCH_D' || TO_CHAR(v_day_offset) || '_' || TO_CHAR(i+1),
-        'Batch record ' || TO_CHAR(i+1) || ' for day offset ' || TO_CHAR(v_day_offset),
-        'ACTIVE',
-        v_commit_time
-      );
-    END LOOP;
-
-    COMMIT; -- commit each day's batch
-    DBMS_OUTPUT.PUT_LINE('Committed rows: ' || v_rows_per_batch || ' for ' || TO_CHAR(v_commit_time, 'YYYY-MM-DD'));
+  -- Insert v_total_rows rows with the SAME commit datetime
+  FOR i IN 0..(v_total_rows - 1) LOOP
+    INSERT INTO TIME_PARTITIONED_DATA (ID, PID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
+    VALUES (
+      v_next_id + i,
+      'PID-' || TO_CHAR(v_next_id + i),
+      'DATA_' || TO_CHAR(i+1),
+      'Record ' || TO_CHAR(i+1) || ' of ' || TO_CHAR(v_total_rows),
+      'ACTIVE',
+      v_commit_time
+    );
   END LOOP;
+
+  -- Single COMMIT for all rows
+  COMMIT;
+  DBMS_OUTPUT.PUT_LINE('===');
+  DBMS_OUTPUT.PUT_LINE('Successfully committed ' || v_total_rows || ' rows with datetime: ' || TO_CHAR(v_commit_time, 'YYYY-MM-DD HH24:MI:SS'));
 END;
 /
 ```
@@ -170,24 +176,21 @@ END;
 **How it works:**
 - `DECLARE` - Begins the declaration section of a PL/SQL block
 - Variable declarations:
-  - `CONSTANT PLS_INTEGER` - Integer constant that cannot be changed
-  - `v_day_offset` - Loop counter for days (0 to 4)
-  - `v_commit_time` - The date/time to use for each batch
-  - `v_next_id` - Starting ID for each batch
+  - `v_total_rows CONSTANT PLS_INTEGER` - Total number of rows to insert (configurable)
+  - `v_commit_time` - The date/time to use for all rows
+  - `v_next_id` - Starting ID for the batch
 - `BEGIN`/`END` - Defines the executable section of a PL/SQL block
-- `FOR v_day_offset IN 0..4 LOOP` - Loop 5 times (0,1,2,3,4)
-- `TRUNC(SYSDATE)` - Truncates current date to midnight (removes time component)
-- `- v_day_offset` - Subtracts days (0,1,2,3,4) to get today and 4 previous days
-- `+ (10/24)` - Adds 10 hours (10/24 of a day) to set time to 10:00 AM
+- Substitution variable handling:
+  - `TO_DATE('&commit_datetime', 'YYYY-MM-DD HH24:MI:SS')` - Parses datetime from command-line argument
+  - `EXCEPTION WHEN OTHERS` - Falls back to `SYSDATE` if no argument provided
 - `SELECT NVL(MAX(ID), 0) + 1 INTO v_next_id` - Gets next available ID:
   - `MAX(ID)` - Finds highest existing ID
   - `NVL(..., 0)` - Returns 0 if no IDs exist
   - `+ 1` - Adds 1 for the next ID
   - `INTO v_next_id` - Stores result in the variable
-- `DBMS_OUTPUT.PUT_LINE` - Outputs text messages to the console
-- Nested `FOR i IN 0..(v_rows_per_batch - 1) LOOP` - Loops for each row in the batch
-- `INSERT INTO ... VALUES` - Standard SQL insert command
-- `COMMIT` - Saves the transaction to the database
+- `FOR i IN 0..(v_total_rows - 1) LOOP` - Loops for each row to insert
+- `INSERT INTO ... VALUES` - Standard SQL insert command with the same `v_commit_time` for all rows
+- `COMMIT` - Saves all rows in a single transaction
 - `/` - Executes the PL/SQL block
 
 ## Drop Old Partitions Script
@@ -346,8 +349,8 @@ This script runs the setup and insert scripts in sequence.
 PROMPT === Running partition_by_time_setup.sql ===
 @/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_setup.sql
 
-PROMPT === Running partition_by_time_insert_5_days.sql ===
-@/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_insert_5_days.sql
+PROMPT === Running partition_by_time_insert_single_commit.sql ===
+@/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_insert_single_commit.sql
 
 -- Uncomment the following lines if you want to also run these scripts:
 
@@ -374,8 +377,8 @@ This script runs the setup, insert, and drop_old_partitions scripts in sequence.
 PROMPT === Running partition_by_time_setup.sql ===
 @/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_setup.sql
 
-PROMPT === Running partition_by_time_insert_5_days.sql ===
-@/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_insert_5_days.sql
+PROMPT === Running partition_by_time_insert_single_commit.sql ===
+@/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_insert_single_commit.sql
 
 PROMPT === Running partition_by_time_drop_old_partitions.sql ===
 @/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_drop_old_partitions.sql
@@ -385,7 +388,7 @@ PROMPT === Running partition_by_time_drop_old_partitions.sql ===
 - Similar to the run_partition_time_test.sql script
 - Runs the scripts in sequence to:
   1. Set up the table structure
-  2. Insert 5 days of test data
+  2. Insert test data with single commit datetime
   3. Drop all partitions except the latest day and P_INITIAL
 
 ## Running the Scripts

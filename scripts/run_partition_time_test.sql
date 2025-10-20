@@ -4,15 +4,15 @@
 --
 -- This script will:
 -- 1. Set up the table structure (partition_by_time_setup.sql)
--- 2. Insert test data for 5 days (partition_by_time_insert_5_days.sql)
+-- 2. Insert test data with single commit datetime (partition_by_time_insert_single_commit.sql)
 --
 -- Note: You can uncomment the additional operations if needed
 
 PROMPT === Running partition_by_time_setup.sql ===
 @/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_setup.sql
 
-PROMPT === Running partition_by_time_insert_5_days.sql ===
-@/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_insert_5_days.sql
+PROMPT === Running partition_by_time_insert_single_commit.sql ===
+@/Users/cheevaritrodnuson/GolandProjects/sql-learn2/scripts/partition_by_time_insert_single_commit.sql
 
 -- Uncomment the following lines if you want to also run these scripts:
 

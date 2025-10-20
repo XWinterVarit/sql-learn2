@@ -1,7 +1,7 @@
 -- Oracle SQL script to DROP older daily partitions, keeping only the latest day
 -- Prerequisite: Run scripts/partition_by_time_setup.sql first to create
 --   TIME_PARTITIONED_DATA (interval partitioned by COMMITTED_AT DATE, 1-day granularity)
--- Optional prerequisite: Run scripts/partition_by_time_insert_5_days.sql to populate 5 days
+-- Optional prerequisite: Run scripts/partition_by_time_insert_single_commit.sql to populate test data
 --
 -- Purpose:
 --   - Identify the newest daily partition
