@@ -1,0 +1,26 @@
+you can look for script style from script_commit_partitions folder
+but for this folder, please look into this scenario
+
+i want a table to replace everyday, but client can query without interuption
+so i have an idea to create a materialized view that point to the table
+when there is the new bulk of data, the table will be truncate, and new data inserted.
+after completely inserted, i want to refresh the materialized view.
+and given that, the materialized view must completed refresh, so the client can see the new data.
+if not completed, the client will see the old data.
+
+this means, when table is truncating or inserting, or materialized view is refreshing,
+client can still access old data.
+
+please create these script
+- clear and create table (so we can run multiple times easily)
+- script that simulate insert bulk of data, so this mean this script will truncate old table and insert new data and refresh materialized view
+
+table should have these column
+
+TABLE  (
+  ID            NUMBER PRIMARY KEY,
+  DATA_VALUE    VARCHAR2(200),
+  DESCRIPTION   VARCHAR2(500),
+  STATUS        VARCHAR2(50),
+  CREATED_AT    DATE  <-- the value will be latest time, and will be the same for every bulk of data, so i can check if data is latest when inserted
+)
