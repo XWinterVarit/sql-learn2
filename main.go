@@ -15,6 +15,8 @@ import (
 
 	"sql-learn2/csvdb"
 	csvdbappend "sql-learn2/csvdb-append"
+	"sql-learn2/partexchange"
+	"sql-learn2/swapper"
 )
 
 func main() {
@@ -31,6 +33,24 @@ func main() {
 	keys := flag.String("keys", strings.TrimSpace(os.Getenv("CSV_KEYS")), "Comma-separated key columns for upsert (e.g., ID,FIRST_NAME)")
 	table := flag.String("table", strings.TrimSpace(os.Getenv("CSV_TABLE")), "Target table name. Defaults to CSV filename as table name.")
 	sample := flag.String("sample", strings.TrimSpace(os.Getenv("CSV_SAMPLE")), "Quick preset for CSV: 'example' or 'append'. If set, overrides -csv.")
+
+	// Synonym swap flags
+	swapMode := flag.Bool("swap", false, "Run synonym-swap workflow: load CSV into inactive table, swap synonym, optionally truncate old active")
+	baseName := flag.String("base", strings.TrimSpace(os.Getenv("SWAP_BASE")), "Base logical name (e.g., EXAMPLE). Physical tables are <BASE>_A and <BASE>_B; synonym defaults to <BASE>.")
+	synonymName := flag.String("synonym", strings.TrimSpace(os.Getenv("SWAP_SYNONYM")), "Synonym name to repoint (defaults to base).")
+	schema := flag.String("schema", strings.TrimSpace(os.Getenv("SWAP_SCHEMA")), "Owner/schema to qualify tables and synonym. Default: current schema.")
+	cleanup := flag.Bool("cleanup", true, "After swap, TRUNCATE the old active table")
+	validate := flag.Bool("validate", false, "Before swap, log row counts of active/inactive tables")
+
+	// Partition exchange flags
+	pexchange := flag.Bool("pexchange", false, "Run partition-exchange workflow: load CSV into staging, exchange partition into master, then cleanup")
+	masterTable := flag.String("master", strings.TrimSpace(os.Getenv("PEX_MASTER")), "Partitioned master table name")
+	stagingTable := flag.String("staging", strings.TrimSpace(os.Getenv("PEX_STAGING")), "Staging table name used for exchange")
+	partitionName := flag.String("partition", strings.TrimSpace(os.Getenv("PEX_PARTITION")), "Partition name in the master to exchange")
+	noValidate := flag.Bool("no-validate", true, "Use WITHOUT VALIDATION during exchange (assumes compatibility)")
+	includeIdx := flag.Bool("include-indexes", false, "Use INCLUDING INDEXES during exchange")
+	cleanupStaging := flag.Bool("cleanup-staging", true, "After exchange, TRUNCATE staging to remove old data")
+
 	flag.Parse()
 
 	// Apply sample preset for quick switching between CSVs
@@ -93,6 +113,51 @@ func main() {
 	}
 	if _, err := os.Stat(absCSV); err != nil {
 		log.Fatalf("csv not accessible: %v", err)
+	}
+
+	// If running partition-exchange workflow, do it now and exit
+	if *pexchange {
+		step(4, totalSteps, "Run partition-exchange workflow")
+		if strings.TrimSpace(*masterTable) == "" || strings.TrimSpace(*stagingTable) == "" || strings.TrimSpace(*partitionName) == "" {
+			log.Fatalf("pexchange requires -master, -staging, -partition")
+		}
+		opt := partexchange.Options{
+			MasterTable:       strings.TrimSpace(*masterTable),
+			StagingTable:      strings.TrimSpace(*stagingTable),
+			PartitionName:     strings.TrimSpace(*partitionName),
+			CSVPath:           absCSV,
+			Schema:            strings.TrimSpace(*schema),
+			DropOldData:       *cleanupStaging,
+			WithoutValidation: *noValidate,
+			IncludingIndexes:  *includeIdx,
+		}
+		if err := partexchange.Run(ctx, db, opt); err != nil {
+			log.Fatalf("partition-exchange failed: %v", err)
+		}
+		log.Printf("Partition exchange completed for master %s, partition %s using staging %s", strings.TrimSpace(*masterTable), strings.TrimSpace(*partitionName), strings.TrimSpace(*stagingTable))
+		return
+	}
+
+	// If running synonym swap workflow, do it now and exit
+	if *swapMode {
+		step(4, totalSteps, "Run synonym-swap workflow")
+		base := strings.TrimSpace(*baseName)
+		if base == "" {
+			base = normalizeIdentifierForOracle(strings.TrimSuffix(filepath.Base(absCSV), filepath.Ext(absCSV)))
+		}
+		opt := swapper.Options{
+			BaseName:      base,
+			SynonymName:   strings.TrimSpace(*synonymName),
+			CSVPath:       absCSV,
+			ValidateCount: *validate,
+			DropOldData:   *cleanup,
+			Schema:        strings.TrimSpace(*schema),
+		}
+		if err := swapper.Run(ctx, db, opt); err != nil {
+			log.Fatalf("swap failed: %v", err)
+		}
+		log.Printf("Swap complete for base %s using CSV %s", base, absCSV)
+		return
 	}
 
 	step(4, totalSteps, "Determine target table name")

@@ -27,6 +27,110 @@ graph TD
     E --> F[ล้างข้อมูลในตาราง Staging]
 ```
 
+### การแสดงแต่ละขั้นตอนในกระบวนการแลกเปลี่ยนพาร์ทิชัน
+
+เพื่อให้เข้าใจการทำงานของแต่ละขั้นตอนได้ชัดเจน เราจะแสดงแต่ละขั้นตอนในกระบวนการแลกเปลี่ยนพาร์ทิชันแยกกัน ดังนี้:
+
+#### 1. ขั้นตอนการเตรียมการ (Setup Process)
+
+แผนภาพด้านล่างแสดงขั้นตอนการเตรียมตารางและดัชนี:
+
+```mermaid
+flowchart TD
+    subgraph prep[1. ขั้นตอนเตรียมการ]
+        direction TB
+        A1[สร้างตารางหลัก\nEXAMPLE_MASTER\nพร้อมพาร์ทิชัน PDATA] --> A2
+        A2[สร้างดัชนีบนตารางหลัก] --> A3
+        A3[สร้างตาราง Staging\nEXAMPLE_STAGING] --> A4
+        A4[สร้างดัชนีบนตาราง Staging\nที่เหมือนกับตารางหลัก]
+    end
+
+    subgraph tables[ตารางที่สร้างขึ้น]
+        M1[(ตารางหลัก\nEXAMPLE_MASTER\nพาร์ทิชัน PDATA\n0 แถว)]
+        S1[(ตาราง Staging\nEXAMPLE_STAGING\n0 แถว)]
+    end
+
+    %% เชื่อมต่อ
+    A4 -.-> M1
+    A4 -.-> S1
+```
+
+#### 2. ขั้นตอนการโหลดข้อมูล (Data Loading)
+
+หลังจากเตรียมตารางเสร็จแล้ว ขั้นตอนต่อไปคือการโหลดข้อมูลเข้าตาราง Staging:
+
+```mermaid
+flowchart TD
+    subgraph load[2. การโหลดข้อมูล]
+        direction TB
+        B1[สร้างดัชนีใหม่บนตาราง Staging\nเพื่อแก้ไขปัญหา ORA-01502] --> B2
+        B2[แทรกข้อมูลใหม่เข้า\nตาราง Staging] --> B3
+        B3[COMMIT เพื่อบันทึกข้อมูล]
+    end
+
+    subgraph tables[สถานะตาราง]
+        M1[(ตารางหลัก\nEXAMPLE_MASTER\nพาร์ทิชัน PDATA\n0 แถว)]
+        S1[(ก่อนโหลดข้อมูล\nEXAMPLE_STAGING\n0 แถว)] --> S2[(หลังโหลดข้อมูล\nEXAMPLE_STAGING\n2 แถว)]
+    end
+
+    %% เชื่อมต่อ
+    B1 -.-> S1
+    B3 -.-> S2
+```
+
+#### 3. ขั้นตอนการแลกเปลี่ยนพาร์ทิชัน (Partition Exchange)
+
+เมื่อข้อมูลพร้อมในตาราง Staging แล้ว เราจะทำการแลกเปลี่ยนพาร์ทิชัน:
+
+```mermaid
+flowchart TD
+    subgraph exchange[3. ตรวจสอบและแลกเปลี่ยน]
+        direction TB
+        C1[ตรวจสอบจำนวนแถวก่อนแลกเปลี่ยน] --> C2
+        C2["ALTER TABLE ... EXCHANGE PARTITION\nสลับข้อมูลระหว่างพาร์ทิชันกับตาราง"] --> C3
+        C3[COMMIT เพื่อยืนยันการแลกเปลี่ยน]
+    end
+
+    subgraph before[ก่อนแลกเปลี่ยน]
+        M1[(ตารางหลัก\nEXAMPLE_MASTER\nพาร์ทิชัน PDATA\n0 แถว)]
+        S1[(ตาราง Staging\nEXAMPLE_STAGING\n2 แถว)]
+    end
+
+    subgraph after[หลังแลกเปลี่ยน]
+        M2[(ตารางหลัก\nEXAMPLE_MASTER\nพาร์ทิชัน PDATA\n2 แถว)]
+        S2[(ตาราง Staging\nEXAMPLE_STAGING\n0 แถว)]
+    end
+
+    %% เชื่อมต่อ
+    C1 -.-> before
+    C3 -.-> after
+    before --> after
+```
+
+#### 4. ขั้นตอนการยืนยันและทำความสะอาด (Verification and Cleanup)
+
+ขั้นตอนสุดท้ายคือการยืนยันผลลัพธ์และทำความสะอาดตาราง Staging:
+
+```mermaid
+flowchart TD
+    subgraph verify[4. การยืนยันและทำความสะอาด]
+        direction TB
+        D1[ตรวจสอบจำนวนแถวหลังแลกเปลี่ยน] --> D2
+        D2[ตรวจสอบข้อมูลในพาร์ทิชัน PDATA] --> D3
+        D3[TRUNCATE ตาราง Staging\nเพื่อเตรียมใช้ครั้งต่อไป]
+    end
+
+    subgraph tables[สถานะตาราง]
+        M1[(ตารางหลัก\nEXAMPLE_MASTER\nพาร์ทิชัน PDATA\n2 แถว)]
+        S1[(หลังแลกเปลี่ยน\nEXAMPLE_STAGING\n0 แถว)] --> S2[(หลังล้างข้อมูล\nEXAMPLE_STAGING\n0 แถว พร้อมใช้งานใหม่)]
+    end
+
+    %% เชื่อมต่อ
+    D1 -.-> M1
+    D1 -.-> S1
+    D3 -.-> S2
+```
+
 ## 2. โครงสร้างตาราง
 
 ### ตารางหลัก (EXAMPLE_MASTER)

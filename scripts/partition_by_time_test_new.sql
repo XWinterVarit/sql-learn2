@@ -1,19 +1,18 @@
--- Oracle SQL script to TEST time-based partition management with cleanup at SECOND granularity
+-- Oracle SQL script to TEST time-based partition management with INTERVAL partitioning per DAY
 -- Prerequisite: Run scripts/partition_by_time_setup.sql first to create
--- TIME_PARTITIONED_DATA (partitioned by COMMITTED_AT using string format "YYYYMMDD HH:MI:SS").
+-- TIME_PARTITIONED_DATA (interval partitioned by COMMITTED_AT DATE with 1-day granularity).
 --
 -- This script does NOT (re)create the table. It:
---   1. Creates a new partition for the current timestamp at SECOND granularity
---   2. Inserts new data with the latest timestamp in the format "YYYYMMDD HH:MI:SS"
---   3. Keeps the table fully available during the insert process
---   4. Cleans up old data ONLY AFTER new data is safely inserted
---   5. Verifies the cleanup while maintaining zero downtime
---   6. Optimized for large batch inserts (5+ million rows per job)
+--   1. Inserts new data with the current date/time (Oracle DATE)
+--   2. Keeps the table fully available during the insert process
+--   3. Cleans up old data ONLY AFTER new data is safely inserted
+--   4. Verifies the cleanup while maintaining zero downtime
+--   5. Optimized for large batch inserts (5+ million rows per job)
 --
 -- Default names in this example:
 --   TABLE NAME: TIME_PARTITIONED_DATA
 --
--- Note: With RANGE partitioning on strings, we create explicit partitions by timestamp
+-- Note: With INTERVAL partitioning, Oracle will auto-create daily partitions as needed
 -- Note: In SQLcl/SQL*Plus, use '/' only to execute PL/SQL blocks; do not place it after DDL terminated by ';'.
 --
 -- No deletion here to maintain data availability
@@ -34,95 +33,52 @@ SELECT partition_name, high_value FROM user_tab_partitions
 WHERE table_name = 'TIME_PARTITIONED_DATA'
 ORDER BY partition_position;
 
-PROMPT === Create partition for current timestamp at SECOND granularity ===
--- Create a new partition for the current timestamp with second-level granularity
--- This allows for extremely fine partitioning - a new partition for each batch
-DECLARE
-  v_commit_time TIMESTAMP := SYSTIMESTAMP;
-  v_commit_str VARCHAR2(19);
-  v_next_partition VARCHAR2(50);
-  v_high_value VARCHAR2(25);
-  v_sql VARCHAR2(1000);
+PROMPT === Interval partitioning note ===
 BEGIN
-  -- Format the timestamp as YYYYMMDD HH:MI:SS for string-based partitioning
-  v_commit_str := TO_CHAR(v_commit_time, 'YYYYMMDD HH24:MI:SS');
-  
-  -- Create next higher bound for partition (add 1 second)
-  v_high_value := TO_CHAR(v_commit_time + INTERVAL '1' SECOND, 'YYYYMMDD HH24:MI:SS');
-  
-  -- Create a unique partition name based on timestamp
-  v_next_partition := 'P_' || TO_CHAR(v_commit_time, 'YYYYMMDDHH24MISS');
-  
-  -- Create a new partition for this exact second
-  v_sql := 'ALTER TABLE TIME_PARTITIONED_DATA ADD PARTITION ' || 
-           v_next_partition || 
-           ' VALUES LESS THAN (''' || v_high_value || ''')';
-           
-  -- Execute the partition creation
-  DBMS_OUTPUT.PUT_LINE('Creating new partition at second granularity: ' || v_next_partition);
-  DBMS_OUTPUT.PUT_LINE('Using timestamp: ' || v_commit_str);
-  DBMS_OUTPUT.PUT_LINE('High value: ' || v_high_value);
-  DBMS_OUTPUT.PUT_LINE('SQL: ' || v_sql);
-  
-  BEGIN
-    EXECUTE IMMEDIATE v_sql;
-    DBMS_OUTPUT.PUT_LINE('Successfully created partition: ' || v_next_partition);
-  EXCEPTION
-    WHEN OTHERS THEN
-      DBMS_OUTPUT.PUT_LINE('Error creating partition: ' || SQLERRM);
-      -- Continue anyway - partition might already exist
-  END;
+  DBMS_OUTPUT.PUT_LINE('Interval partitioning is enabled (1-day granularity).');
+  DBMS_OUTPUT.PUT_LINE('Oracle will automatically create the necessary daily partition upon insert.');
 END;
 /
 
 PROMPT === Insert new batch of data with current timestamp ===
--- All records in this batch share the SAME current timestamp string
--- Run this script multiple times to create multiple batches with different timestamps
--- In production, each insert job handles ~5 million rows in a single partition
+-- Interval partitioning will auto-create the daily partition upon insert
+-- Run this script multiple times to create multiple batches on different days
+-- In production, each insert job handles ~5 million rows in a single daily partition
 DECLARE
-  v_commit_time TIMESTAMP := SYSTIMESTAMP;
-  v_commit_str VARCHAR2(19);
+  v_commit_time DATE := SYSDATE;
   v_next_id NUMBER;
   v_batch_size NUMBER := 4; -- In production, this would be ~5 million
 BEGIN
-  -- Format timestamp as YYYYMMDD HH:MI:SS for string-based partitioning
-  v_commit_str := TO_CHAR(v_commit_time, 'YYYYMMDD HH24:MI:SS');
-  
   -- Get the next available ID (max ID + 1) to avoid conflicts with existing data
   SELECT NVL(MAX(ID), 0) + 1 INTO v_next_id FROM TIME_PARTITIONED_DATA;
   
-  DBMS_OUTPUT.PUT_LINE('Starting batch insert with timestamp: ' || v_commit_str);
-  DBMS_OUTPUT.PUT_LINE('In production, this would insert ~5 million rows into a single partition');
+  DBMS_OUTPUT.PUT_LINE('Starting batch insert with COMMITTED_AT (DATE): ' || TO_CHAR(v_commit_time, 'YYYY-MM-DD HH24:MI:SS'));
+  DBMS_OUTPUT.PUT_LINE('In production, this would insert ~5 million rows into a single daily partition');
   
   -- For testing purposes, we only insert 4 records
-  -- In production, this would be a bulk insert of ~5 million rows
-  -- All with exactly the same timestamp string, going into the partition we just created
-  
-  -- Insert batch of records with same timestamp string
-  INSERT INTO TIME_PARTITIONED_DATA (ID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
-  VALUES (v_next_id, 'BATCH_DATA_1', 'Batch record 1', 'ACTIVE', v_commit_str);
+  INSERT INTO TIME_PARTITIONED_DATA (ID, PID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
+  VALUES (v_next_id, 'PID-' || v_next_id, 'BATCH_DATA_1', 'Batch record 1', 'ACTIVE', v_commit_time);
 
-  INSERT INTO TIME_PARTITIONED_DATA (ID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
-  VALUES (v_next_id + 1, 'BATCH_DATA_2', 'Batch record 2', 'ACTIVE', v_commit_str);
+  INSERT INTO TIME_PARTITIONED_DATA (ID, PID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
+  VALUES (v_next_id + 1, 'PID-' || (v_next_id + 1), 'BATCH_DATA_2', 'Batch record 2', 'ACTIVE', v_commit_time);
 
-  INSERT INTO TIME_PARTITIONED_DATA (ID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
-  VALUES (v_next_id + 2, 'BATCH_DATA_3', 'Batch record 3', 'ACTIVE', v_commit_str);
+  INSERT INTO TIME_PARTITIONED_DATA (ID, PID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
+  VALUES (v_next_id + 2, 'PID-' || (v_next_id + 2), 'BATCH_DATA_3', 'Batch record 3', 'ACTIVE', v_commit_time);
 
-  INSERT INTO TIME_PARTITIONED_DATA (ID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
-  VALUES (v_next_id + 3, 'BATCH_DATA_4', 'Batch record 4', 'ACTIVE', v_commit_str);
+  INSERT INTO TIME_PARTITIONED_DATA (ID, PID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT)
+  VALUES (v_next_id + 3, 'PID-' || (v_next_id + 3), 'BATCH_DATA_4', 'Batch record 4', 'ACTIVE', v_commit_time);
 
   COMMIT;
   
-  -- Now that new data is safely inserted, remove data from previous runs
-  -- This maintains data availability - old data was accessible during the insert
-  DBMS_OUTPUT.PUT_LINE('Removing data from previous runs...');
+  -- Now that new data is safely inserted, remove data from previous days (keep today)
+  DBMS_OUTPUT.PUT_LINE('Removing data from previous days (keeping today)...');
   DELETE FROM TIME_PARTITIONED_DATA
-  WHERE COMMITTED_AT < v_commit_str;
-  DBMS_OUTPUT.PUT_LINE('Rows deleted from previous runs: ' || SQL%ROWCOUNT);
+  WHERE COMMITTED_AT < TRUNC(v_commit_time);
+  DBMS_OUTPUT.PUT_LINE('Rows deleted from previous days: ' || SQL%ROWCOUNT);
   COMMIT;
 
   -- Display the timestamp used for this batch
-  DBMS_OUTPUT.PUT_LINE('Batch committed at: ' || v_commit_str);
+  DBMS_OUTPUT.PUT_LINE('Batch committed at: ' || TO_CHAR(v_commit_time, 'YYYY-MM-DD HH24:MI:SS'));
   DBMS_OUTPUT.PUT_LINE('Records inserted: ' || v_next_id || ' to ' || (v_next_id + 3));
 END;
 /
@@ -175,8 +131,8 @@ BEGIN
 END;
 /
 
-PROMPT === Drop all old partitions (keeping only the latest batch with current timestamp) ===
--- With string-based second-level partitioning, we need to dynamically drop partitions by name
+PROMPT === Drop all old partitions (keeping only the latest daily partition) ===
+-- With interval partitioning, partitions are system-named; we'll drop by position
 -- This PL/SQL block drops all partitions except the most recent one
 DECLARE
   v_partition_count NUMBER := 0;
@@ -229,15 +185,16 @@ SELECT COUNT(*) AS total_records_after_cleanup FROM TIME_PARTITIONED_DATA;
 
 PROMPT === Display remaining data ===
 COLUMN ID FORMAT 999
+COLUMN PID FORMAT A15
 COLUMN DATA_VALUE FORMAT A20
 COLUMN DESCRIPTION FORMAT A40
 COLUMN STATUS FORMAT A10
 COLUMN COMMITTED_AT FORMAT A30
-SELECT ID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT
+SELECT ID, PID, DATA_VALUE, DESCRIPTION, STATUS, COMMITTED_AT
 FROM TIME_PARTITIONED_DATA
 ORDER BY COMMITTED_AT, ID;
 
-PROMPT === Done. Table now contains only the latest batch with current timestamp. ===
+PROMPT === Done. Table now contains only the latest daily batch. ===
 -- EXIT command removed to prevent issues in SQLcl
 -- Uncomment the line below if running in SQL*Plus and you want to exit
 EXIT
