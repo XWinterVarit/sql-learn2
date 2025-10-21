@@ -16,10 +16,14 @@ import (
 // until it observes the CREATED_AT change. It records timings and writes a CSV log.
 
 func main() {
+	start := time.Now()
+	log.Printf("App start: MV Refresh Monitor at %s", start.Format(time.RFC3339Nano))
 	cfg := ParseConfig()
 	if err := runMonitor(cfg); err != nil {
+		log.Printf("App end (error) after %s: %v", time.Since(start), err)
 		log.Fatalf("mv monitor: %v", err)
 	}
+	log.Printf("App end (ok) after %s", time.Since(start))
 }
 
 // runMonitor orchestrates the end-to-end workflow using smaller helpers.
@@ -58,7 +62,7 @@ func runMonitor(cfg Config) error {
 
 	// Aggregate
 	observeEnd := computeObserveEnd(cfg, triggerAt)
-	firstChangeAt, firstChangeVal, finalBaseline := aggregate(samples, w, baseline, !cfg.Quiet, observeEnd)
+	firstChangeAt, firstChangeVal, finalBaseline, totalPolls, totalSuccess, totalErrors := aggregate(samples, w, baseline, !cfg.Quiet, observeEnd)
 
 	// Cleanup pollers
 	cancel()
@@ -79,7 +83,7 @@ func runMonitor(cfg Config) error {
 		log.Printf("Simulate script finished in %s", scriptEnd.Sub(scriptStart))
 	}
 
-	printSummary(cfg.Table, csvPath, finalBaseline, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt, firstChangeVal)
+	printSummary(cfg.Table, csvPath, finalBaseline, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt, firstChangeVal, totalPolls, totalSuccess, totalErrors)
 	return nil
 }
 
@@ -124,11 +128,13 @@ func startTrigger(cfg Config) (time.Time, <-chan scriptResult) {
 }
 
 // aggregate consumes poll samples until observeEnd and writes CSV rows.
-func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbose bool, observeEnd time.Time) (time.Time, string, string) {
+func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbose bool, observeEnd time.Time) (time.Time, string, string, int, int, int) {
 	var firstChangeAt time.Time
 	var firstChangeVal string
 	var windowCount, windowErr, windowChanged int
+	var totalPolls, totalSuccess, totalErrors int
 	currentBaseline := baseline
+	lastSeen := ""
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -148,11 +154,17 @@ func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbos
 	for {
 		select {
 		case s := <-samples:
-			if s.Err != nil {
+			totalPolls++
+			if s.Err != nil || s.Value == "" {
 				windowErr++
+				totalErrors++
 				break
 			}
 			windowCount++
+			totalSuccess++
+			if s.Value != "" {
+				lastSeen = s.Value
+			}
 			if currentBaseline == "" && s.Value != "" {
 				currentBaseline = s.Value
 				log.Printf("Baseline established: %q", currentBaseline)
@@ -167,16 +179,16 @@ func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbos
 			_ = w.Write([]string{s.When.Format(time.RFC3339Nano), fmt.Sprintf("%d", s.WorkerID), safeCSV(s.Value), fmt.Sprintf("%t", s.Changed)})
 		case <-ticker.C:
 			if verbose {
-				log.Printf("stats: polls=%d errs=%d changed=%d baseline=%q firstChange=%v", windowCount, windowErr, windowChanged, currentBaseline, !firstChangeAt.IsZero())
+				log.Printf("stats: polls=%d errs=%d changed=%d latest=%q baseline=%q firstChange=%v", windowCount, windowErr, windowChanged, lastSeen, currentBaseline, !firstChangeAt.IsZero())
 			}
 			windowCount, windowErr, windowChanged = 0, 0, 0
 		case <-deadline.C:
-			return firstChangeAt, firstChangeVal, currentBaseline
+			return firstChangeAt, firstChangeVal, currentBaseline, totalPolls, totalSuccess, totalErrors
 		}
 	}
 }
 
-func printSummary(table, csvPath, baseline string, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt time.Time, firstChangeVal string) {
+func printSummary(table, csvPath, baseline string, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt time.Time, firstChangeVal string, totalPolls, totalSuccess, totalErrors int) {
 	fmt.Println("==== Summary ====")
 	fmt.Printf("Table: %s\n", table)
 	fmt.Printf("Baseline MAX(CREATED_AT): %q\n", baseline)
@@ -195,6 +207,9 @@ func printSummary(table, csvPath, baseline string, triggerAt, observeEnd, script
 		}
 	}
 	fmt.Printf("CSV log: %s\n", csvPath)
+	fmt.Printf("Overall query count: %d\n", totalPolls)
+	fmt.Printf("Query success count: %d\n", totalSuccess)
+	fmt.Printf("Error count: %d\n", totalErrors)
 	if !firstChangeAt.IsZero() {
 		plotTimeline(triggerAt, observeEnd, firstChangeAt)
 	}
