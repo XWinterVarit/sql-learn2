@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run the materialized view bulk-refresh test using provided Oracle connection info.
 # Usage:
-#   ORA_USER=LEARN1 ORA_PASS=Welcome ORA_HOST=localhost ORA_PORT=1521 ORA_SERVICE=XE ./scripts/run_mv_refresh_test.sh
+#   ORA_USER=LEARN1 ORA_PASS=Welcome ORA_HOST=localhost ORA_PORT=1521 ORA_SERVICE=XE ./script_material_view_refresh/run_mv_refresh_test.sh
 # Notes:
 # - Tries SQLcl (sql) first, then SQL*Plus (sqlplus). If neither is found, exits non‑zero.
 # - Spools output to logs/mv_refresh_test_YYYYmmdd_HHMMSS.log

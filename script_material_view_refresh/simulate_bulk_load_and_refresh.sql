@@ -11,7 +11,7 @@
 --
 SET SERVEROUTPUT ON
 DECLARE
-  l_bulk_count  PLS_INTEGER := 10;  -- Adjust batch size as needed
+  l_bulk_count  PLS_INTEGER := 1000000;  -- Adjust batch size as needed
   -- Use Thailand time (Asia/Bangkok) for CREATED_AT; apply the same timestamp to the entire batch
   l_created_at  DATE := TO_DATE(TO_CHAR(CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD HH24:MI:SS'), 'YYYY-MM-DD HH24:MI:SS');
 BEGIN
