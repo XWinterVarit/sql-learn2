@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+
 	"github.com/sijms/go-ora/v2/network"
 )
 
@@ -99,10 +100,10 @@ func newTCPNego(session *network.Session) (*TCPNego, error) {
 	if err != nil {
 		return nil, err
 	}
-	if result.ServerCompileTimeCaps[15]&1 != 0 {
+	if len(result.ServerCompileTimeCaps) > 15 && result.ServerCompileTimeCaps[15]&1 != 0 {
 		session.HasEOSCapability = true
 	}
-	if result.ServerCompileTimeCaps[16]&1 != 0 {
+	if len(result.ServerCompileTimeCaps) > 16 && result.ServerCompileTimeCaps[16]&1 != 0 {
 		session.HasFSAPCapability = true
 	}
 	if result.ServerCompileTimeCaps == nil || len(result.ServerCompileTimeCaps) < 8 {
@@ -112,8 +113,8 @@ func newTCPNego(session *network.Session) (*TCPNego, error) {
 		session.UseBigClrChunks = true
 		session.ClrChunkSize = 0x7FFF
 	}
-	//this.m_b32kTypeSupported = this.m_dtyNeg.m_b32kTypeSupported;
-	//this.m_bSupportSessionStateOps = this.m_dtyNeg.m_bSupportSessionStateOps;
-	//this.m_marshallingEngine.m_bServerUsingBigSCN = this.m_serverCompiletimeCapabilities[7] >= (byte) 8;
+	// this.m_b32kTypeSupported = this.m_dtyNeg.m_b32kTypeSupported;
+	// this.m_bSupportSessionStateOps = this.m_dtyNeg.m_bSupportSessionStateOps;
+	// this.m_marshallingEngine.m_bServerUsingBigSCN = this.m_serverCompiletimeCapabilities[7] >= (byte) 8;
 	return &result, nil
 }

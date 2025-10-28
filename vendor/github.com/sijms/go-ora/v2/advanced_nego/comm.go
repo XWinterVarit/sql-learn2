@@ -2,6 +2,7 @@ package advanced_nego
 
 import (
 	"errors"
+
 	"github.com/sijms/go-ora/v2/network"
 )
 
@@ -9,9 +10,9 @@ type AdvancedNegoComm struct {
 	session *network.Session
 }
 
-func newComm(session *network.Session) *AdvancedNegoComm {
-	return &AdvancedNegoComm{session: session}
-}
+// func newComm(session *network.Session) *AdvancedNegoComm {
+// 	return &AdvancedNegoComm{session: session}
+// }
 
 func (comm *AdvancedNegoComm) writePacketHeader(length, _type int) {
 	comm.session.PutInt(length, 2, true, false)
@@ -46,15 +47,11 @@ func (comm *AdvancedNegoComm) validatePacketHeader(length, _type int) error {
 		if length > 1 {
 			return errors.New("advanced negotiation error: cannot validate packet header")
 		}
-	case 3:
-		fallthrough
-	case 6:
+	case 3, 6:
 		if length > 2 {
 			return errors.New("advanced negotiation error: cannot validate packet header")
 		}
-	case 4:
-		fallthrough
-	case 5:
+	case 4, 5:
 		if length > 4 {
 			return errors.New("advanced negotiation error: cannot validate packet header")
 		}
@@ -76,6 +73,7 @@ func (comm *AdvancedNegoComm) readUB1() (number uint8, err error) {
 	number, err = comm.session.GetByte()
 	return
 }
+
 func (comm *AdvancedNegoComm) writeUB1(number uint8) {
 	comm.writePacketHeader(1, 2)
 	comm.session.PutBytes(number)
@@ -133,6 +131,7 @@ func (comm *AdvancedNegoComm) readStatus() (status int, err error) {
 	status, err = comm.session.GetInt(2, false, true)
 	return
 }
+
 func (comm *AdvancedNegoComm) readVersion() (uint32, error) {
 	_, err := comm.readPacketHeader(5)
 	if err != nil {

@@ -11,7 +11,7 @@ type SummaryObject struct {
 	CurRowNumber         int // uint32
 	RetCode              int // uint16
 	arrayElmWError       int // uint16
-	arrayElmErrno        int //uint16
+	arrayElmErrno        int // uint16
 	CursorID             int // uint16
 	errorPos             int // uint16
 	sqlType              uint8
@@ -83,7 +83,7 @@ func NewSummary(session *Session) (*SummaryObject, error) {
 	if err != nil {
 		return nil, err
 	}
-	if session.TTCVersion >= 6 {
+	if session.TTCVersion >= 4 {
 		result.Flags, err = session.GetInt(2, true, true)
 		if err != nil {
 			return nil, err

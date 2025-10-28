@@ -2,9 +2,11 @@ package go_ora
 
 import (
 	"bytes"
+	"context"
 	"errors"
-	"github.com/sijms/go-ora/v2/converters"
 	"go/types"
+
+	"github.com/sijms/go-ora/v2/converters"
 )
 
 type Clob struct {
@@ -22,7 +24,8 @@ type lobInterface interface {
 type Blob struct {
 	locator []byte
 	Data    []byte
-	Valid   bool
+	// deprecated
+	Valid bool
 }
 
 type Lob struct {
@@ -47,14 +50,15 @@ func newLob(connection *Connection) *Lob {
 		connection: connection,
 	}
 }
+
 func (lob *Lob) initialize() {
 	lob.bNullO2U = false
 	lob.sendSize = false
 	lob.size = 0
-	//lob.charsetID = 0
+	// lob.charsetID = 0
 	lob.sourceOffset = 0
 	lob.destOffset = 0
-	//lob.scn = nil
+	// lob.scn = nil
 }
 
 // variableWidthChar if lob has variable width char or not
@@ -72,7 +76,7 @@ func (lob *Lob) getSize() (size int64, err error) {
 	lob.initialize()
 	lob.sendSize = true
 	session := lob.connection.session
-	lob.connection.connOption.Tracer.Print("Read Lob Size")
+	lob.connection.tracer.Print("Read Lob Size")
 	session.ResetBuffer()
 	lob.writeOp(1)
 	err = session.Write()
@@ -84,15 +88,15 @@ func (lob *Lob) getSize() (size int64, err error) {
 		return
 	}
 	size = lob.size
-	lob.connection.connOption.Tracer.Print("Lob Size: ", size)
+	lob.connection.tracer.Print("Lob Size: ", size)
 	return
 }
 
-func (lob *Lob) getDataWithOffsetSize(offset, count int64) (data []byte, err error) {
+func (lob *Lob) getDataWithOffsetSize(ctx context.Context, offset, count int64) (data []byte, err error) {
 	if offset == 0 && count == 0 {
-		lob.connection.connOption.Tracer.Print("Read Lob Data:")
+		lob.connection.tracer.Print("Read Lob Data:")
 	} else {
-		lob.connection.connOption.Tracer.Printf("Read Lob Data Position: %d, Count: %d\n", offset, count)
+		lob.connection.tracer.Printf("Read Lob Data Position: %d, Count: %d\n", offset, count)
 	}
 	lob.initialize()
 	lob.size = count
@@ -101,6 +105,8 @@ func (lob *Lob) getDataWithOffsetSize(offset, count int64) (data []byte, err err
 	lob.data.Reset()
 	session := lob.connection.session
 	session.ResetBuffer()
+	done := session.StartContext(ctx)
+	defer session.EndContext(done)
 	lob.writeOp(2)
 	err = session.Write()
 	if err != nil {
@@ -116,11 +122,11 @@ func (lob *Lob) getDataWithOffsetSize(offset, count int64) (data []byte, err err
 
 // getData return lob data
 func (lob *Lob) getData() (data []byte, err error) {
-	return lob.getDataWithOffsetSize(0, 0)
+	return lob.getDataWithOffsetSize(context.Background(), 0, 0)
 }
 
 func (lob *Lob) putData(data []byte) error {
-	lob.connection.connOption.Tracer.Printf("Put Lob Data: %d bytes", len(data))
+	lob.connection.tracer.Printf("Put Lob Data: %d bytes", len(data))
 	lob.initialize()
 	lob.size = int64(len(data))
 	lob.sendSize = true
@@ -138,7 +144,7 @@ func (lob *Lob) putData(data []byte) error {
 
 func (lob *Lob) putString(data string) error {
 	conn := lob.connection
-	conn.connOption.Tracer.Printf("Put Lob String: %d character", int64(len([]rune(data))))
+	conn.tracer.Printf("Put Lob String: %d character", int64(len([]rune(data))))
 	lob.initialize()
 	var strConv converters.IStringConverter
 	if lob.variableWidthChar() {
@@ -191,7 +197,7 @@ func (lob *Lob) freeTemporary() error {
 }
 
 func (lob *Lob) createTemporaryBLOB() error {
-	lob.connection.connOption.Tracer.Print("Create Temporary BLob:")
+	lob.connection.tracer.Print("Create Temporary BLob:")
 	lob.sourceLocator = make([]byte, 0x28)
 	lob.sourceLocator[1] = 0x54
 	lob.sourceLen = len(lob.sourceLocator)
@@ -213,7 +219,7 @@ func (lob *Lob) createTemporaryBLOB() error {
 }
 
 func (lob *Lob) createTemporaryClob(charset, charsetForm int) error {
-	lob.connection.connOption.Tracer.Print("Create Temporary CLob")
+	lob.connection.tracer.Print("Create Temporary CLob")
 	lob.sourceLocator = make([]byte, 0x28)
 	lob.sourceLocator[1] = 0x54
 	lob.sourceLen = len(lob.sourceLocator)
@@ -241,7 +247,7 @@ func (lob *Lob) createTemporaryClob(charset, charsetForm int) error {
 }
 
 func (lob *Lob) open(mode, opID int) error {
-	lob.connection.connOption.Tracer.Printf("Open Lob: Mode= %d   Operation ID= %d", mode, opID)
+	lob.connection.tracer.Printf("Open Lob: Mode= %d   Operation ID= %d", mode, opID)
 	if lob.isTemporary() {
 		if lob.sourceLocator[7]&8 == 8 {
 			return errors.New("TTC Error")
@@ -260,28 +266,30 @@ func (lob *Lob) open(mode, opID int) error {
 		if err != nil {
 			return err
 		}
-		return lob.read()
+		err = lob.read()
+		return processReset(err, lob.connection)
 	}
 }
 
 func (lob *Lob) close(opID int) error {
-	lob.connection.connOption.Tracer.Print("Close Lob: ")
-	if lob.isTemporary() {
-		if lob.sourceLocator[7]&8 == 8 {
-			return errors.New("TTC Error")
-		}
-		lob.sourceLocator[7] &= 0xE7
-		return nil
-	} else {
-		lob.initialize()
-		lob.connection.session.ResetBuffer()
-		lob.writeOp(opID)
-		err := lob.connection.session.Write()
-		if err != nil {
-			return err
-		}
-		return lob.read()
+	lob.connection.tracer.Print("Close Lob: ")
+	//if lob.isTemporary() {
+	//	if lob.sourceLocator[7]&8 == 8 {
+	//		return errors.New("TTC Error")
+	//	}
+	//	lob.sourceLocator[7] &= 0xE7
+	//	return nil
+	//} else {
+	lob.initialize()
+	lob.connection.session.ResetBuffer()
+	lob.writeOp(opID)
+	err := lob.connection.session.Write()
+	if err != nil {
+		return err
 	}
+	err = lob.read()
+	return processReset(err, lob.connection)
+	//}
 }
 
 func (lob *Lob) writeOp(operationID int) {
@@ -380,19 +388,6 @@ func (lob *Lob) read() error {
 			return err
 		}
 		switch msg {
-		//case 4:
-		//	session.Summary, err = network.NewSummary(session)
-		//	if err != nil {
-		//		return err
-		//	}
-		//	if session.HasError() {
-		//		if session.Summary.RetCode == 1403 {
-		//			session.Summary = nil
-		//		} else {
-		//			return session.GetError()
-		//		}
-		//	}
-		//	loop = false
 		case 8:
 			// read rpa message
 			if len(lob.sourceLocator) != 0 {
@@ -442,69 +437,44 @@ func (lob *Lob) read() error {
 					lob.isNull = true
 				}
 			}
-		//case 9:
-		//	if session.HasEOSCapability {
-		//		temp, err := session.GetInt(4, true, true)
-		//		if err != nil {
-		//			return err
-		//		}
-		//		if session.Summary != nil {
-		//			session.Summary.EndOfCallStatus = temp
-		//		}
-		//	}
-		//	loop = false
 		case 14:
 			// get the data
 			err = lob.readData()
 			if err != nil {
 				return err
 			}
-		//case 15:
-		//	warning, err := network.NewWarningObject(session)
-		//	if err != nil {
-		//		return err
-		//	}
-		//	if warning != nil {
-		//		fmt.Println(warning)
-		//	}
-		//case 23:
-		//	opCode, err := session.GetByte()
-		//	if err != nil {
-		//		return err
-		//	}
-		//	err = lob.connection.getServerNetworkInformation(opCode)
-		//	if err != nil {
-		//		return err
-		//	}
+			//if session.IsBreak() {
+			//	session.RestoreIndex()
+			//}
 		default:
-			err = lob.connection.readResponse(msg)
+			err = lob.connection.readMsg(msg)
 			if err != nil {
 				return err
 			}
-			if msg == 4 {
-				if session.HasError() {
-					if session.Summary.RetCode == 1403 {
-						session.Summary = nil
-					} else {
-						return session.GetError()
-					}
-				}
+			if msg == 4 || msg == 9 {
+				//if session.HasError() {
+				//	if session.Summary.RetCode == 1403 {
+				//		session.Summary = nil
+				//	} else {
+				//		return session.GetError()
+				//	}
+				//}
 				loop = false
 			}
-			if msg == 9 {
-				loop = false
-			}
-			//return errors.New(fmt.Sprintf("TTC error: received code %d during LOB reading", msg))
+			//if msg == 9 {
+			//	loop = false
+			//}
+			// return errors.New(fmt.Sprintf("TTC error: received code %d during LOB reading", msg))
 		}
 	}
-	if session.IsBreak() {
-		err := (&simpleObject{
-			connection: lob.connection,
-		}).read()
-		if err != nil {
-			return err
-		}
-	}
+	//if session.IsBreak() {
+	//	err := (&simpleObject{
+	//		connection: lob.connection,
+	//	}).read()
+	//	if err != nil {
+	//		return err
+	//	}
+	//}
 	return nil
 }
 
@@ -606,7 +576,7 @@ func (lob *Lob) readData() error {
 }
 
 func (lob *Lob) GetLobId(locator []byte) []byte {
-	//BitConverter.ToString(lobLocator, 10, 10);
+	// BitConverter.ToString(lobLocator, 10, 10);
 	return locator[10 : 10+10]
 }
 
@@ -620,7 +590,8 @@ func (lob *Lob) append(dest []byte) error {
 	if err != nil {
 		return err
 	}
-	return lob.read()
+	err = lob.read()
+	return processReset(err, lob.connection)
 }
 
 func (lob *Lob) copy(srcLocator, dstLocator []byte, srcOffset, dstOffset, length int64) error {
@@ -639,7 +610,8 @@ func (lob *Lob) copy(srcLocator, dstLocator []byte, srcOffset, dstOffset, length
 	if err != nil {
 		return err
 	}
-	return lob.read()
+	err = lob.read()
+	return processReset(err, lob.connection)
 }
 
 func (val *Clob) Scan(value interface{}) error {
@@ -670,9 +642,9 @@ func (val *Clob) Scan(value interface{}) error {
 }
 
 func (val *Blob) Scan(value interface{}) error {
-	val.Valid = true
+	// val.Valid = true
 	if value == nil {
-		val.Valid = false
+		// val.Valid = false
 		val.Data = nil
 		return nil
 	}
@@ -685,7 +657,6 @@ func (val *Blob) Scan(value interface{}) error {
 		val.Data = temp
 	case types.Nil:
 		val.Data = nil
-		val.Valid = false
 	default:
 		return errors.New("go-ora: Blob column type require Blob or []byte values")
 	}
@@ -722,9 +693,11 @@ func (val *NClob) Scan(value interface{}) error {
 func (val Blob) getLocator() []byte {
 	return val.locator
 }
+
 func (val Clob) getLocator() []byte {
 	return val.locator
 }
+
 func (val NClob) getLocator() []byte {
 	return val.locator
 }

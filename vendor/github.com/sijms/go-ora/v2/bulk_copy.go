@@ -2,9 +2,9 @@ package go_ora
 
 import (
 	"bytes"
+	"database/sql/driver"
 	"encoding/binary"
 	"fmt"
-	"github.com/sijms/go-ora/v2/network"
 )
 
 var (
@@ -21,7 +21,7 @@ type BulkCopy struct {
 	PartitionName string
 	ColumnNames   []string
 	data          bytes.Buffer
-	//BatchSize     int
+	// BatchSize     int
 	columns     []ParameterInfo
 	tableCursor int64
 	sdbaBits    int64
@@ -36,6 +36,7 @@ func NewBulkCopy(conn *Connection, tableName string) *BulkCopy {
 	}
 	return ret
 }
+
 func (bulk *BulkCopy) AddRow(values ...interface{}) error {
 	data := bytes.Buffer{}
 	for _, val := range values {
@@ -48,8 +49,9 @@ func (bulk *BulkCopy) AddRow(values ...interface{}) error {
 			Flag:        3,
 			CharsetID:   bulk.conn.tcpNego.ServerCharset,
 			CharsetForm: 1,
+			Value:       val,
 		}
-		err := par.encodeValue(val, 0, bulk.conn)
+		err := par.encodeValue(0, bulk.conn)
 		if err != nil {
 			return err
 		}
@@ -68,7 +70,7 @@ func (bulk *BulkCopy) AddRow(values ...interface{}) error {
 	var flag uint8 = 0x3C
 	length := data.Len() + 4
 	session := bulk.conn.session
-	//session.WriteBytes(&bulk.data, flag)
+	// session.WriteBytes(&bulk.data, flag)
 	bulk.data.WriteByte(flag)
 	session.WriteInt(&bulk.data, length, 2, true, false)
 	bulk.data.WriteByte(uint8(len(bulk.columns)))
@@ -83,11 +85,11 @@ func (bulk *BulkCopy) AddRow(values ...interface{}) error {
 	//	}
 	//}
 	return nil
-	//session.PutBytes(flag)
-	//session.PutInt(length, 2, true, false)
-	//session.PutBytes(uint8(len(bulk.columns)))
-	//session.PutBytes(data.Bytes()...)
-	//return nil
+	// session.PutBytes(flag)
+	// session.PutInt(length, 2, true, false)
+	// session.PutBytes(uint8(len(bulk.columns)))
+	// session.PutBytes(data.Bytes()...)
+	// return nil
 }
 
 func (bulk *BulkCopy) StartStream() error {
@@ -97,6 +99,7 @@ func (bulk *BulkCopy) StartStream() error {
 	}
 	return nil
 }
+
 func (bulk *BulkCopy) EndStream() error {
 	defer bulk.data.Reset()
 	err := bulk.writeStreamMessage()
@@ -137,16 +140,16 @@ func (bulk *BulkCopy) readStreamResponse() error {
 			if err != nil {
 				return err
 			}
-			//tempArray := make([]int64, length)
+			// tempArray := make([]int64, length)
 			for x := 0; x < length; x++ {
-				//tempArray[x], err = session.GetInt64(4, true, true)
+				// tempArray[x], err = session.GetInt64(4, true, true)
 				_, err = session.GetInt(4, true, true)
 				if err != nil {
 					return err
 				}
 			}
 		default:
-			err = bulk.conn.readResponse(msg)
+			err = bulk.conn.readMsg(msg)
 			if err != nil {
 				return err
 			}
@@ -167,7 +170,7 @@ func (bulk *BulkCopy) readStreamResponse() error {
 
 func (bulk *BulkCopy) prepareDirectPath() error {
 	if bulk.conn.State != Opened {
-		return &network.OracleError{ErrCode: 6413, ErrMsg: "ORA-06413: Connection not open"}
+		return driver.ErrBadConn
 	}
 	if len(bulk.SchemaName) == 0 {
 		bulk.SchemaName = bulk.conn.connOption.UserID
@@ -178,7 +181,7 @@ func (bulk *BulkCopy) prepareDirectPath() error {
 	}
 	// read
 	return bulk.readPrepareResponse()
-	//return nil
+	// return nil
 }
 
 func (bulk *BulkCopy) writePrepareMessage() error {
@@ -186,7 +189,7 @@ func (bulk *BulkCopy) writePrepareMessage() error {
 	dppi4[0] = 400
 	dppi4[1] = 400
 	dppi4[11] = 0xFFFF
-	//if in transaction:
+	// if in transaction:
 	//	this.m_dppi4[16] = 0xFFFF;
 	//	this.m_dppi4[17] = 0xFFFF;
 	//	this.m_dppi4[36] = 1
@@ -254,8 +257,8 @@ func (bulk *BulkCopy) readPrepareResponse() error {
 				}
 			}
 
-			//this.m_dppoparm = new TTCKeywordValuePair[length];
-			//for (int index = 0; index < length2; ++index)
+			// this.m_dppoparm = new TTCKeywordValuePair[length];
+			// for (int index = 0; index < length2; ++index)
 			//	this.m_dppoparm[index] = TTCKeywordValuePair.Unmarshal(this.m_marshallingEngine);
 			length, err = session.GetInt(2, true, true)
 			if err != nil {
@@ -273,8 +276,8 @@ func (bulk *BulkCopy) readPrepareResponse() error {
 				return err
 			}
 
-			//this.m_dppo4 = new long[length];
-			//for (int index = 0; index < length3; ++index)
+			// this.m_dppo4 = new long[length];
+			// for (int index = 0; index < length3; ++index)
 			//	this.m_dppo4[index] = this.m_marshallingEngine.UnmarshalUB4();
 			tempArray := make([]int64, length)
 			for x := 0; x < length; x++ {
@@ -299,7 +302,7 @@ func (bulk *BulkCopy) readPrepareResponse() error {
 				bulk.dbaBits = 0
 			}
 		default:
-			err = bulk.conn.readResponse(msg)
+			err = bulk.conn.readMsg(msg)
 			if err != nil {
 				return err
 			}
@@ -365,7 +368,7 @@ func (bulk *BulkCopy) readFinalResponse() error {
 				}
 			}
 		default:
-			err = bulk.conn.readResponse(msg)
+			err = bulk.conn.readMsg(msg)
 			if err != nil {
 				return err
 			}

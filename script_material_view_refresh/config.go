@@ -25,6 +25,7 @@ type Config struct {
 	SQLPath     string
 	Client      string
 	Quiet       bool
+	BulkCount   int
 }
 
 // ParseConfig parses flags/env and returns a Config with defaults applied.
@@ -39,12 +40,13 @@ func ParseConfig() Config {
 	table := flag.String("table", getenvDefault("MV_TABLE", "MV_BULK_DATA"), "Table or view to poll (expects CREATED_AT column)")
 	concurrency := flag.Int("concurrency", intEnv("MV_CONCURRENCY", minInt(8, runtime.NumCPU()*2)), "Number of concurrent pollers")
 	interval := flag.Duration("interval", durationEnv("MV_INTERVAL", 2*time.Millisecond), "Polling interval per goroutine")
-	preload := flag.Duration("preload", durationEnv("MV_PRELOAD", 20*time.Second), "Warm-up duration before triggering bulk refresh script")
+	preload := flag.Duration("preload", durationEnv("MV_PRELOAD", 10*time.Second), "Warm-up duration before triggering bulk refresh script")
 	observe := flag.Duration("observe", durationEnv("MV_OBSERVE", 200*time.Second), "Observation window after triggering the script")
 	outCSV := flag.String("out", "", "Path to CSV output (default: logs/mv_monitor_YYYYmmdd_HHMMSS.csv)")
 	sqlPath := flag.String("sql", getenvDefault("MV_SQL", "script_material_view_refresh/simulate_bulk_load_and_refresh.sql"), "Path to simulate_bulk_load_and_refresh.sql")
 	client := flag.String("client", getenvDefault("ORACLE_CLI", "auto"), "Oracle CLI to use: auto|sql|sqlplus")
 	quiet := flag.Bool("quiet", false, "Reduce per-interval logs; still prints summary")
+	bulkCount := flag.Int("bulkcount", intEnv("MV_BULK_COUNT", 10000), "Number of rows to insert during bulk load simulation")
 	flag.Parse()
 
 	return Config{
@@ -63,6 +65,7 @@ func ParseConfig() Config {
 		SQLPath:     *sqlPath,
 		Client:      *client,
 		Quiet:       *quiet,
+		BulkCount:   *bulkCount,
 	}
 }
 

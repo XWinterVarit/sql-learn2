@@ -4,44 +4,40 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"sync"
+
+	"github.com/sijms/go-ora/v2/trace"
 )
 
 type DataPacket struct {
 	Packet
-	sessionCtx *SessionContext
-	dataFlag   uint16
-	buffer     []byte
+
+	dataFlag uint16
+	buffer   []byte
 }
 
 func (pck *DataPacket) bytes() []byte {
-	output := bytes.Buffer{}
-	temp := make([]byte, 0xA)
-	if pck.sessionCtx.handshakeComplete && pck.sessionCtx.Version >= 315 {
-		binary.BigEndian.PutUint32(temp, pck.length)
-	} else {
-		binary.BigEndian.PutUint16(temp, uint16(pck.length))
-	}
-	temp[4] = uint8(pck.packetType)
-	temp[5] = pck.flag
-	binary.BigEndian.PutUint16(temp[8:], pck.dataFlag)
-	output.Write(temp)
+	output := pck.Packet.bytes()
+	binary.BigEndian.PutUint16(output[8:], pck.dataFlag)
+	ret := bytes.NewBuffer(output)
 	if len(pck.buffer) > 0 {
-		output.Write(pck.buffer)
+		ret.Write(pck.buffer)
 	}
-	return output.Bytes()
+	return ret.Bytes()
 }
 
-func newDataPacket(initialData []byte, sessionCtx *SessionContext) (*DataPacket, error) {
-	//var outputData []byte = initialData
+func newDataPacket(initialData []byte, sessionCtx *SessionContext, tracer trace.Tracer, mu *sync.Mutex) (*DataPacket, error) {
+	// var outputData []byte = initialData
 	var err error
+	mu.Lock()
+	defer mu.Unlock()
 	if sessionCtx.AdvancedService.HashAlgo != nil {
 		hashData := sessionCtx.AdvancedService.HashAlgo.Compute(initialData)
 		initialData = append(initialData, hashData...)
 	}
 	if sessionCtx.AdvancedService.CryptAlgo != nil {
-		//outputData = make([]byte, len(outputData))
-		//copy(outputData, outputData)
-		tracer := sessionCtx.ConnOption.Tracer
+		// outputData = make([]byte, len(outputData))
+		// copy(outputData, outputData)
 		tracer.LogPacket("Write packet (Decrypted): ", initialData)
 		initialData, err = sessionCtx.AdvancedService.CryptAlgo.Encrypt(initialData)
 		if err != nil {
@@ -55,53 +51,56 @@ func newDataPacket(initialData []byte, sessionCtx *SessionContext) (*DataPacket,
 
 	return &DataPacket{
 		Packet: Packet{
+			sessionCtx: sessionCtx,
 			dataOffset: 0xA,
 			length:     uint32(len(initialData)) + 0xA,
 			packetType: DATA,
 			flag:       0,
 		},
-		sessionCtx: sessionCtx,
-		dataFlag:   0,
-		buffer:     initialData,
+		dataFlag: 0,
+		buffer:   initialData,
 	}, nil
 }
 
-func newDataPacketFromData(packetData []byte, sessionCtx *SessionContext) (*DataPacket, error) {
+func newDataPacketFromData(packetData []byte, sessionCtx *SessionContext, tracer trace.Tracer, mu *sync.Mutex) (*DataPacket, error) {
+	mu.Lock()
+	defer mu.Unlock()
 	if len(packetData) < 0xA || PacketType(packetData[4]) != DATA {
-		return nil, errors.New("Not data packet")
+		return nil, errors.New("not data packet")
 	}
 	pck := &DataPacket{
 		Packet: Packet{
+			sessionCtx: sessionCtx,
 			dataOffset: 0xA,
-			//length:     binary.BigEndian.Uint16(packetData),
+			// length:     binary.BigEndian.Uint16(packetData),
 			packetType: PacketType(packetData[4]),
 			flag:       packetData[5],
 		},
-		sessionCtx: sessionCtx,
-		dataFlag:   binary.BigEndian.Uint16(packetData[8:]),
-		buffer:     packetData[10:],
+		dataFlag: binary.BigEndian.Uint16(packetData[8:]),
+		buffer:   packetData[10:],
 	}
 	if sessionCtx.handshakeComplete && sessionCtx.Version >= 315 {
 		pck.length = binary.BigEndian.Uint32(packetData)
 	} else {
 		pck.length = uint32(binary.BigEndian.Uint16(packetData))
 	}
-	var err error
-	if sessionCtx.AdvancedService.CryptAlgo != nil || sessionCtx.AdvancedService.HashAlgo != nil {
-		pck.buffer = pck.buffer[:len(pck.buffer)-1]
-	}
-	if sessionCtx.AdvancedService.CryptAlgo != nil {
-		pck.buffer, err = sessionCtx.AdvancedService.CryptAlgo.Decrypt(pck.buffer)
-		if err != nil {
-			return nil, err
+	if len(pck.buffer) > 1 {
+		var err error
+		if sessionCtx.AdvancedService.CryptAlgo != nil || sessionCtx.AdvancedService.HashAlgo != nil {
+			pck.buffer = pck.buffer[:len(pck.buffer)-1]
 		}
-		tracer := sessionCtx.ConnOption.Tracer
-		tracer.LogPacket("Read packet (Decrypted): ", pck.buffer)
-	}
-	if sessionCtx.AdvancedService.HashAlgo != nil {
-		pck.buffer, err = sessionCtx.AdvancedService.HashAlgo.Validate(pck.buffer)
-		if err != nil {
-			return nil, err
+		if sessionCtx.AdvancedService.CryptAlgo != nil {
+			pck.buffer, err = sessionCtx.AdvancedService.CryptAlgo.Decrypt(pck.buffer)
+			if err != nil {
+				return nil, err
+			}
+			tracer.LogPacket("Read packet (Decrypted): ", pck.buffer)
+		}
+		if sessionCtx.AdvancedService.HashAlgo != nil {
+			pck.buffer, err = sessionCtx.AdvancedService.HashAlgo.Validate(pck.buffer)
+			if err != nil {
+				return nil, err
+			}
 		}
 	}
 	return pck, nil

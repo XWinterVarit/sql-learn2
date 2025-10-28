@@ -6,8 +6,11 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"github.com/sijms/go-ora/v2/network/security"
 	"math/big"
+
+	"github.com/sijms/go-ora/v2/configurations"
+	"github.com/sijms/go-ora/v2/network/security"
+	"github.com/sijms/go-ora/v2/trace"
 )
 
 type dataIntegrityService struct {
@@ -16,21 +19,23 @@ type dataIntegrityService struct {
 	publicKey []byte
 	sharedKey []byte
 	iV        []byte
+	tracer    trace.Tracer
 }
 
-func NewDataIntegrityService(comm *AdvancedNegoComm) (*dataIntegrityService, error) {
+func newDataIntegrityService(comm *AdvancedNegoComm, negoInfo *configurations.AdvNegoServiceInfo, tracer trace.Tracer) (*dataIntegrityService, error) {
 	output := &dataIntegrityService{
 		defaultService: defaultService{
 			comm:                  comm,
-			level:                 comm.session.Context.ConnOption.IntServiceLevel,
+			level:                 negoInfo.IntServiceLevel,
 			serviceType:           3,
 			version:               0xB200200,
 			availableServiceNames: []string{"", "MD5", "SHA1", "SHA512", "SHA256", "SHA384"},
 			availableServiceIDs:   []int{0, 1, 3, 4, 5, 6},
 		},
+		tracer: tracer,
 	}
 	err := output.buildServiceList([]string{}, true, true)
-	//output.selectedServ, err = output.validate(strings.Split(str,","), true)
+	// output.selectedServ, err = output.validate(strings.Split(str,","), true)
 	if err != nil {
 		return nil, err
 	}
@@ -98,16 +103,17 @@ func (serv *dataIntegrityService) readServiceData(subPacketNum int) error {
 	publicKey.FillBytes(serv.publicKey)
 	serv.sharedKey = make([]byte, byteLen)
 	sharedKey.FillBytes(serv.sharedKey)
-	tracer := comm.session.Context.ConnOption.Tracer
-	tracer.Print("Diffie Hellman Keys:")
-	tracer.LogPacket("Generator:", genBytes)
-	tracer.LogPacket("Prime:", primeBytes)
-	tracer.LogPacket("Private Key:", privateKeyBytes)
-	tracer.LogPacket("Public Key:", serv.publicKey)
-	tracer.LogPacket("Server Public Key:", serverPublicKeyBytes)
-	tracer.LogPacket("Shared Key:", serv.sharedKey)
+
+	serv.tracer.Print("Diffie Hellman Keys:")
+	serv.tracer.LogPacket("Generator:", genBytes)
+	serv.tracer.LogPacket("Prime:", primeBytes)
+	serv.tracer.LogPacket("Private Key:", privateKeyBytes)
+	serv.tracer.LogPacket("Public Key:", serv.publicKey)
+	serv.tracer.LogPacket("Server Public Key:", serverPublicKeyBytes)
+	serv.tracer.LogPacket("Shared Key:", serv.sharedKey)
 	return nil
 }
+
 func (serv *dataIntegrityService) writeServiceData() error {
 	serv.writeHeader(2)
 	comm := serv.comm
@@ -116,7 +122,7 @@ func (serv *dataIntegrityService) writeServiceData() error {
 	for i := 0; i < len(serv.selectedIndices); i++ {
 		index := serv.selectedIndices[i]
 		selectedIndices[i] = uint8(serv.availableServiceIDs[index])
-		//comm.session.PutBytes(uint8(serv.availableServiceIDs[index]))
+		// comm.session.PutBytes(uint8(serv.availableServiceIDs[index]))
 	}
 	comm.writeBytes(selectedIndices)
 	return nil
@@ -129,7 +135,7 @@ func (serv *dataIntegrityService) getServiceDataLength() int {
 func (serv *dataIntegrityService) activateAlgorithm() error {
 	serv.comm.session.Context.AdvancedService.SessionKey = serv.sharedKey
 	serv.comm.session.Context.AdvancedService.IV = serv.iV
-	//return errors.New(fmt.Sprintf("advanced negotiation error: data integrity service algorithm: %d still not supported", serv.algoID))
+	// return errors.New(fmt.Sprintf("advanced negotiation error: data integrity service algorithm: %d still not supported", serv.algoID))
 	var algo security.OracleNetworkDataIntegrity = nil
 	var err error
 	switch serv.algoID {

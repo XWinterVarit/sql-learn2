@@ -4,7 +4,7 @@ go 1.25
 
 require (
 	github.com/Masterminds/squirrel v1.5.4
-	github.com/sijms/go-ora/v2 v2.7.20
+	github.com/sijms/go-ora/v2 v2.9.0
 )
 
 require (

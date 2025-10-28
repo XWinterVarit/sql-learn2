@@ -4,12 +4,13 @@ import (
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
+	"github.com/sijms/go-ora/v2/converters"
 	"time"
 )
 
 type TimeStamp time.Time
 
-func (val *TimeStamp) Value() (driver.Value, error) {
+func (val TimeStamp) Value() (driver.Value, error) {
 	return val, nil
 }
 
@@ -29,6 +30,27 @@ func (val *TimeStamp) Scan(value interface{}) error {
 	return nil
 }
 
+func (val TimeStamp) GetType() TNSType {
+	return TIMESTAMP
+}
+func (val TimeStamp) GetLength() int {
+	return converters.MAX_LEN_DATE
+}
+
+func (val TimeStamp) GetCharsetForm() int {
+	return 0
+}
+func (val TimeStamp) Encode() ([]byte, error) {
+	return converters.EncodeTimeStamp(time.Time(val), false, true), nil
+}
+func (val *TimeStamp) Decode(data []byte) error {
+	temp, err := converters.DecodeDate(data)
+	if err != nil {
+		return err
+	}
+	*val = TimeStamp(temp)
+	return nil
+}
 func (val TimeStamp) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Time(val))
 }
@@ -73,7 +95,7 @@ func (val NullTimeStamp) MarshalJSON() ([]byte, error) {
 }
 
 func (val *NullTimeStamp) UnmarshalJSON(data []byte) error {
-	var temp = new(time.Time)
+	temp := new(time.Time)
 	err := json.Unmarshal(data, temp)
 	if err != nil {
 		return err

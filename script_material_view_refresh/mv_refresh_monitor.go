@@ -58,7 +58,7 @@ func runMonitor(cfg Config) error {
 	samples, wg := StartPollers(ctx, db, cfg.Table, baseline, cfg.Concurrency, cfg.Interval)
 
 	// Trigger
-	triggerAt, resultCh := startTrigger(cfg)
+	triggerAt, resultCh := startTrigger(ctx, db, cfg)
 
 	// Aggregate
 	observeEnd := computeObserveEnd(cfg, triggerAt)
@@ -103,7 +103,7 @@ func computeObserveEnd(cfg Config, triggerAt time.Time) time.Time {
 	return observeEnd
 }
 
-// startTrigger schedules the simulate script to run after the preload duration.
+// startTrigger schedules the bulk load simulation to run after the preload duration.
 // It returns the planned trigger time and a channel delivering the script's start/end times and error.
 type scriptResult struct {
 	start time.Time
@@ -111,16 +111,16 @@ type scriptResult struct {
 	err   error
 }
 
-func startTrigger(cfg Config) (time.Time, <-chan scriptResult) {
+func startTrigger(ctx context.Context, db *sql.DB, cfg Config) (time.Time, <-chan scriptResult) {
 	triggerAt := time.Now().Add(cfg.Preload)
-	log.Printf("Warm-up for %s, will trigger bulk load script at ~%s", cfg.Preload.String(), triggerAt.Format(time.RFC3339))
+	log.Printf("Warm-up for %s, will trigger bulk load simulation at ~%s", cfg.Preload.String(), triggerAt.Format(time.RFC3339))
 
 	done := make(chan scriptResult, 1)
 	go func() {
 		time.Sleep(time.Until(triggerAt))
 		st := time.Now()
-		log.Printf("Triggering simulate script: %s", cfg.SQLPath)
-		err := RunSimulateScript(cfg.Client, cfg.User, cfg.Pass, cfg.Host, cfg.Port, cfg.Service, cfg.SQLPath)
+		log.Printf("Triggering bulk load simulation (Go implementation, %d rows)", cfg.BulkCount)
+		err := RunBulkLoadSimulation(ctx, db, cfg.BulkCount)
 		ed := time.Now()
 		done <- scriptResult{start: st, end: ed, err: err}
 	}()
