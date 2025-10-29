@@ -7,6 +7,8 @@ import (
 	"math/rand"
 	"sync"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 )
 
 // PollSample represents a single polling observation from a worker.
@@ -16,13 +18,14 @@ type PollSample struct {
 	Value    string
 	Err      error
 	Changed  bool
+	Duration time.Duration // Total query duration for this poll
 }
 
 // StartPollers launches N goroutines that poll CREATED_AT from a randomly chosen row
 // whose id is not greater than the current MAX(id) in the given table, at the specified
 // interval. It returns a samples channel and a WaitGroup pointer that will be done when
 // all pollers exit (on ctx cancellation).
-func StartPollers(ctx context.Context, db *sql.DB, table, baseline string, concurrency int, interval time.Duration) (chan PollSample, *sync.WaitGroup) {
+func StartPollers(ctx context.Context, db *sqlx.DB, table, baseline string, concurrency int, interval time.Duration) (chan PollSample, *sync.WaitGroup) {
 	samples := make(chan PollSample, concurrency*4)
 	var wg sync.WaitGroup
 
@@ -46,17 +49,23 @@ func StartPollers(ctx context.Context, db *sql.DB, table, baseline string, concu
 					return
 				case <-t.C:
 					when := time.Now()
+					pollStart := time.Now() // Track total poll duration
 
 					// 1) Get current MAX(id)
 					var maxID sql.NullInt64
+					queryStart := time.Now()
 					err := db.QueryRowContext(ctx, maxIDQry).Scan(&maxID)
+					queryDuration := time.Since(queryStart)
+					if queryDuration > time.Second {
+						err = fmt.Errorf("query MAX(id) took %v (>1s), counted as error", queryDuration)
+					}
 					if err != nil {
-						samples <- PollSample{When: when, WorkerID: id, Value: "", Err: err, Changed: false}
+						samples <- PollSample{When: when, WorkerID: id, Value: "", Err: err, Changed: false, Duration: time.Since(pollStart)}
 						continue
 					}
 					if !maxID.Valid || maxID.Int64 <= 0 {
 						// Table empty or invalid MAX(id)
-						samples <- PollSample{When: when, WorkerID: id, Value: "", Err: nil, Changed: false}
+						samples <- PollSample{When: when, WorkerID: id, Value: "", Err: nil, Changed: false, Duration: time.Since(pollStart)}
 						continue
 					}
 
@@ -67,7 +76,12 @@ func StartPollers(ctx context.Context, db *sql.DB, table, baseline string, concu
 					const maxAttempts = 3
 					for attempt := 0; attempt < maxAttempts; attempt++ {
 						r := 1 + rng.Int63n(maxID.Int64) // in [1, maxID]
+						queryStart = time.Now()
 						pickErr = db.QueryRowContext(ctx, createdAtByIDQry, r).Scan(&s)
+						queryDuration = time.Since(queryStart)
+						if queryDuration > time.Second {
+							pickErr = fmt.Errorf("query CREATED_AT took %v (>1s), counted as error", queryDuration)
+						}
 						if pickErr == nil && s.Valid {
 							val = s.String
 							break
@@ -75,7 +89,7 @@ func StartPollers(ctx context.Context, db *sql.DB, table, baseline string, concu
 					}
 					// If after attempts no valid value, keep val as empty and report last error if any
 					changed := baseline != "" && val != "" && val != baseline
-					samples <- PollSample{When: when, WorkerID: id, Value: val, Err: pickErr, Changed: changed}
+					samples <- PollSample{When: when, WorkerID: id, Value: val, Err: pickErr, Changed: changed, Duration: time.Since(pollStart)}
 				}
 			}
 		}(i)

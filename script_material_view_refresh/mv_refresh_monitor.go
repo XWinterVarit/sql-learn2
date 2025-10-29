@@ -2,12 +2,13 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"encoding/csv"
 	"fmt"
 	"log"
+	"sort"
 	"time"
 
+	"github.com/jmoiron/sqlx"
 	_ "github.com/sijms/go-ora/v2"
 )
 
@@ -35,12 +36,14 @@ func runMonitor(cfg Config) error {
 	if err != nil {
 		return err
 	}
-	db, err := OpenOracle(ctx, connString)
+	db, err := OpenOracle(ctx, connString, cfg.Concurrency)
 	if err != nil {
 		return err
 	}
 	defer db.Close()
 	log.Printf("Connected: oracle://%s:***@%s:%s/%s (driver go-ora)", cfg.User, cfg.Host, cfg.Port, cfg.Service)
+	log.Printf("Connection pool configured: concurrency=%d, maxOpen=%d, maxIdle=%d",
+		cfg.Concurrency, cfg.Concurrency*3+5, cfg.Concurrency+3)
 
 	// CSV output
 	csvFile, w, csvPath, err := PrepareCSV(cfg.OutCSV)
@@ -62,7 +65,7 @@ func runMonitor(cfg Config) error {
 
 	// Aggregate
 	observeEnd := computeObserveEnd(cfg, triggerAt)
-	firstChangeAt, firstChangeVal, finalBaseline, totalPolls, totalSuccess, totalErrors := aggregate(samples, w, baseline, !cfg.Quiet, observeEnd)
+	firstChangeAt, firstChangeVal, finalBaseline, totalPolls, totalSuccess, totalErrors, p90 := aggregate(samples, w, baseline, !cfg.Quiet, observeEnd)
 
 	// Cleanup pollers
 	cancel()
@@ -83,11 +86,11 @@ func runMonitor(cfg Config) error {
 		log.Printf("Simulate script finished in %s", scriptEnd.Sub(scriptStart))
 	}
 
-	printSummary(cfg.Table, csvPath, finalBaseline, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt, firstChangeVal, totalPolls, totalSuccess, totalErrors)
+	printSummary(cfg.Table, csvPath, finalBaseline, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt, firstChangeVal, totalPolls, totalSuccess, totalErrors, p90)
 	return nil
 }
 
-func determineBaseline(ctx context.Context, db *sql.DB, table string) string {
+func determineBaseline(ctx context.Context, db *sqlx.DB, table string) string {
 	b, err := FetchMaxCreated(ctx, db, table)
 	if err != nil {
 		log.Printf("WARN: initial fetch failed: %v", err)
@@ -111,7 +114,7 @@ type scriptResult struct {
 	err   error
 }
 
-func startTrigger(ctx context.Context, db *sql.DB, cfg Config) (time.Time, <-chan scriptResult) {
+func startTrigger(ctx context.Context, db *sqlx.DB, cfg Config) (time.Time, <-chan scriptResult) {
 	triggerAt := time.Now().Add(cfg.Preload)
 	log.Printf("Warm-up for %s, will trigger bulk load simulation at ~%s", cfg.Preload.String(), triggerAt.Format(time.RFC3339))
 
@@ -128,13 +131,15 @@ func startTrigger(ctx context.Context, db *sql.DB, cfg Config) (time.Time, <-cha
 }
 
 // aggregate consumes poll samples until observeEnd and writes CSV rows.
-func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbose bool, observeEnd time.Time) (time.Time, string, string, int, int, int) {
+func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbose bool, observeEnd time.Time) (time.Time, string, string, int, int, int, time.Duration) {
 	var firstChangeAt time.Time
 	var firstChangeVal string
 	var windowCount, windowErr, windowChanged int
 	var totalPolls, totalSuccess, totalErrors int
 	currentBaseline := baseline
 	lastSeen := ""
+	var durations []time.Duration       // Collect all query durations for overall p90 calculation
+	var windowDurations []time.Duration // Collect query durations for current window p90
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -155,6 +160,8 @@ func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbos
 		select {
 		case s := <-samples:
 			totalPolls++
+			durations = append(durations, s.Duration)             // Collect duration for overall p90 calculation
+			windowDurations = append(windowDurations, s.Duration) // Collect duration for window p90 calculation
 			if s.Err != nil || s.Value == "" {
 				windowErr++
 				totalErrors++
@@ -179,16 +186,38 @@ func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbos
 			_ = w.Write([]string{s.When.Format(time.RFC3339Nano), fmt.Sprintf("%d", s.WorkerID), safeCSV(s.Value), fmt.Sprintf("%t", s.Changed)})
 		case <-ticker.C:
 			if verbose {
-				log.Printf("stats: polls=%d errs=%d changed=%d latest=%q baseline=%q firstChange=%v", windowCount, windowErr, windowChanged, lastSeen, currentBaseline, !firstChangeAt.IsZero())
+				windowP90 := calculateP90(windowDurations)
+				log.Printf("stats: polls=%d errs=%d changed=%d latest=%q baseline=%q firstChange=%v p90=%v", windowCount, windowErr, windowChanged, lastSeen, currentBaseline, !firstChangeAt.IsZero(), windowP90)
 			}
 			windowCount, windowErr, windowChanged = 0, 0, 0
+			windowDurations = nil // Reset window durations for next interval
 		case <-deadline.C:
-			return firstChangeAt, firstChangeVal, currentBaseline, totalPolls, totalSuccess, totalErrors
+			p90 := calculateP90(durations)
+			return firstChangeAt, firstChangeVal, currentBaseline, totalPolls, totalSuccess, totalErrors, p90
 		}
 	}
 }
 
-func printSummary(table, csvPath, baseline string, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt time.Time, firstChangeVal string, totalPolls, totalSuccess, totalErrors int) {
+// calculateP90 calculates the 90th percentile of query durations.
+func calculateP90(durations []time.Duration) time.Duration {
+	if len(durations) == 0 {
+		return 0
+	}
+	// Sort durations in ascending order
+	sorted := make([]time.Duration, len(durations))
+	copy(sorted, durations)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i] < sorted[j]
+	})
+	// Calculate 90th percentile index
+	index := int(float64(len(sorted)) * 0.90)
+	if index >= len(sorted) {
+		index = len(sorted) - 1
+	}
+	return sorted[index]
+}
+
+func printSummary(table, csvPath, baseline string, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt time.Time, firstChangeVal string, totalPolls, totalSuccess, totalErrors int, p90 time.Duration) {
 	fmt.Println("==== Summary ====")
 	fmt.Printf("Table: %s\n", table)
 	fmt.Printf("Baseline MAX(CREATED_AT): %q\n", baseline)
@@ -210,6 +239,7 @@ func printSummary(table, csvPath, baseline string, triggerAt, observeEnd, script
 	fmt.Printf("Overall query count: %d\n", totalPolls)
 	fmt.Printf("Query success count: %d\n", totalSuccess)
 	fmt.Printf("Error count: %d\n", totalErrors)
+	fmt.Printf("P90 query usage time: %v\n", p90)
 	if !firstChangeAt.IsZero() {
 		plotTimeline(triggerAt, observeEnd, firstChangeAt)
 	}

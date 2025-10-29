@@ -4,6 +4,7 @@ go 1.25
 
 require (
 	github.com/Masterminds/squirrel v1.5.4
+	github.com/jmoiron/sqlx v1.4.0
 	github.com/sijms/go-ora/v2 v2.9.0
 )
 
