@@ -2,7 +2,6 @@ package bulkinsert
 
 import (
 	"fmt"
-	"strings"
 )
 
 // BulkDataBuilder provides an efficient way to build bulk insert data
@@ -10,21 +9,19 @@ import (
 // It allows human-readable row-by-row data entry while internally
 // storing data in column-oriented format to avoid transposition overhead.
 type BulkDataBuilder struct {
-	tableName   string
 	columnNames []string
 	columnData  [][]interface{}
 	numRows     int
 	capacity    int
 }
 
-// NewBulkDataBuilder creates a new builder with the specified table name, columns and initial capacity.
+// NewBulkDataBuilder creates a new builder with the specified columns and initial capacity.
 // Providing an accurate capacity avoids reallocation as rows are added.
 //
 // Parameters:
-//   - tableName: name of the database table to insert into
 //   - columnNames: slice of column names in order
 //   - capacity: expected number of rows (for pre-allocation)
-func NewBulkDataBuilder(tableName string, columnNames []string, capacity int) *BulkDataBuilder {
+func NewBulkDataBuilder(columnNames []string, capacity int) *BulkDataBuilder {
 	if capacity <= 0 {
 		capacity = 100 // default capacity
 	}
@@ -38,7 +35,6 @@ func NewBulkDataBuilder(tableName string, columnNames []string, capacity int) *B
 	}
 
 	return &BulkDataBuilder{
-		tableName:   tableName,
 		columnNames: columnNames,
 		columnData:  columnData,
 		numRows:     0,
@@ -146,33 +142,6 @@ func (b *BulkDataBuilder) GetColumnData() []interface{} {
 // GetNumRows returns the number of rows currently in the builder.
 func (b *BulkDataBuilder) GetNumRows() int {
 	return b.numRows
-}
-
-// GetInsertSQL generates and returns the INSERT SQL statement for go-ora bulk insert.
-// This allows the caller to use InsertBatched directly without writing SQL manually.
-// The SQL statement includes the table name, column names, and placeholders in the correct format.
-//
-// Returns the SQL statement string (e.g., "INSERT INTO table (col1, col2) VALUES (:1, :2)")
-func (b *BulkDataBuilder) GetInsertSQL() string {
-	placeholders := make([]string, len(b.columnNames))
-	for i := range placeholders {
-		placeholders[i] = fmt.Sprintf(":%d", i+1)
-	}
-
-	return fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
-		b.tableName,
-		strings.Join(b.columnNames, ", "),
-		strings.Join(placeholders, ", "))
-}
-
-// GetBatchParams returns BatchInsertParams ready to use with InsertBatched function.
-// This provides an easy way to get the SQL statement without writing it manually.
-//
-// Returns BatchInsertParams containing the generated INSERT SQL statement.
-func (b *BulkDataBuilder) GetBatchParams() BatchInsertParams {
-	return BatchInsertParams{
-		InsertSQL: b.GetInsertSQL(),
-	}
 }
 
 // Reset clears all data from the builder while preserving column names and capacity.

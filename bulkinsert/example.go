@@ -17,9 +17,9 @@ func ExampleBasicUsage(ctx context.Context, db *sqlx.DB) error {
 	colLastName := ColLastName
 	colBalance := ColBalance
 
-	// Step 2: Create a BulkDataBuilder with table name, column names and capacity
+	// Step 2: Create a BulkDataBuilder with column names and capacity (no table name needed)
 	columnNames := []string{ColID, ColName, ColLastName, ColBalance}
-	builder := NewBulkDataBuilder("employees", columnNames, 100)
+	builder := NewBulkDataBuilder(columnNames, 100)
 
 	// Step 3: Add rows using the Row type (array-like interface)
 	// This style is easy to read and maintain with low error prone arrangement
@@ -72,10 +72,9 @@ func ExampleBasicUsage(ctx context.Context, db *sqlx.DB) error {
 
 	// Step 5: Get SQL and column data from builder, then execute bulk insert
 	// The builder provides these automatically - NO manual SQL writing required!
-	params := builder.GetBatchParams()
 	columnData := builder.GetColumnData()
 
-	duration, err := InsertBatched(ctx, db, params, columnData...)
+	duration, err := InsertBatched(ctx, db, "employees", builder.GetColumnNames(), columnData...)
 	if err != nil {
 		return fmt.Errorf("bulk insert failed: %w", err)
 	}
@@ -84,7 +83,6 @@ func ExampleBasicUsage(ctx context.Context, db *sqlx.DB) error {
 	return nil
 }
 
-// ExampleManualControl demonstrates using GetBatchParams() and GetColumnData()
 // with InsertBatched for more control over the insert process.
 // The builder provides the SQL statement and column data, so the caller doesn't
 // need to write SQL manually, but still has full control over execution.
@@ -95,9 +93,9 @@ func ExampleManualControl(ctx context.Context, db *sqlx.DB) error {
 	colLastName := ColLastName
 	colBalance := ColBalance
 
-	// Step 2: Create a BulkDataBuilder with table name, column names and capacity
+	// Step 2: Create a BulkDataBuilder with column names and capacity (no table name needed)
 	columnNames := []string{ColID, ColName, ColLastName, ColBalance}
-	builder := NewBulkDataBuilder("employees", columnNames, 100)
+	builder := NewBulkDataBuilder(columnNames, 100)
 
 	// Step 3: Add rows using the Row type (array-like interface)
 	err := builder.AddRow(Row{
@@ -122,12 +120,11 @@ func ExampleManualControl(ctx context.Context, db *sqlx.DB) error {
 
 	// Step 4: Get the SQL statement and column data from builder
 	// The builder provides these automatically - NO manual SQL writing required!
-	params := builder.GetBatchParams()    // Gets SQL: "INSERT INTO employees (id, name, lastname, balance) VALUES (:1, :2, :3, :4)"
 	columnData := builder.GetColumnData() // Gets column-oriented data ready for go-ora
 
 	// Step 5: Execute bulk insert using InsertBatched with builder-provided params
 	// You have full control over when/how to execute, but no SQL writing needed!
-	duration, err := InsertBatched(ctx, db, params, columnData...)
+	duration, err := InsertBatched(ctx, db, "employees", builder.GetColumnNames(), columnData...)
 	if err != nil {
 		return fmt.Errorf("bulk insert failed: %w", err)
 	}
@@ -146,7 +143,7 @@ func ExampleWithGeneratedData(ctx context.Context, db *sqlx.DB) error {
 	columnNames := rows.GetColumnsNames()
 
 	// Step 3: Create a BulkDataBuilder
-	builder := NewBulkDataBuilder("employees", columnNames, len(rows))
+	builder := NewBulkDataBuilder(columnNames, len(rows))
 
 	// Step 4: Add all generated rows to the builder
 	err := builder.AddRows(rows)
@@ -156,10 +153,9 @@ func ExampleWithGeneratedData(ctx context.Context, db *sqlx.DB) error {
 
 	// Step 5: Get SQL and column data from builder, then execute bulk insert
 	// The builder provides these automatically - NO manual SQL writing required!
-	params := builder.GetBatchParams()
 	columnData := builder.GetColumnData()
 
-	duration, err := InsertBatched(ctx, db, params, columnData...)
+	duration, err := InsertBatched(ctx, db, "employees", builder.GetColumnNames(), columnData...)
 	if err != nil {
 		return fmt.Errorf("bulk insert failed: %w", err)
 	}
@@ -180,7 +176,7 @@ func ExampleWithBatches(ctx context.Context, db *sqlx.DB, totalRows int, batchSi
 	columnNames := []string{ColID, ColName, ColLastName, ColBalance}
 
 	// Create a reusable builder with batch size capacity
-	builder := NewBulkDataBuilder("employees", columnNames, batchSize)
+	builder := NewBulkDataBuilder(columnNames, batchSize)
 
 	totalInserted := 0
 
@@ -198,10 +194,9 @@ func ExampleWithBatches(ctx context.Context, db *sqlx.DB, totalRows int, batchSi
 
 		// When batch is full, insert and reset
 		if builder.GetNumRows() >= batchSize {
-			params := builder.GetBatchParams()
 			columnData := builder.GetColumnData()
 
-			duration, err := InsertBatched(ctx, db, params, columnData...)
+			duration, err := InsertBatched(ctx, db, "employees", builder.GetColumnNames(), columnData...)
 			if err != nil {
 				return fmt.Errorf("batch insert failed at row %d: %w", i, err)
 			}
@@ -216,10 +211,9 @@ func ExampleWithBatches(ctx context.Context, db *sqlx.DB, totalRows int, batchSi
 
 	// Insert remaining rows if any
 	if builder.GetNumRows() > 0 {
-		params := builder.GetBatchParams()
 		columnData := builder.GetColumnData()
 
-		duration, err := InsertBatched(ctx, db, params, columnData...)
+		duration, err := InsertBatched(ctx, db, "employees", builder.GetColumnNames(), columnData...)
 		if err != nil {
 			return fmt.Errorf("final batch insert failed: %w", err)
 		}
@@ -243,7 +237,7 @@ func ExampleFlexibleColumnOrder(ctx context.Context, db *sqlx.DB) error {
 
 	// Builder expects columns in this order
 	columnNames := []string{ColID, ColName, ColLastName, ColBalance}
-	builder := NewBulkDataBuilder("employees", columnNames, 10)
+	builder := NewBulkDataBuilder(columnNames, 10)
 
 	// NOTE: Column names are captured from the first row (or provided at builder creation)
 	// and subsequent rows are matched by position. Keep the same order for all rows.
@@ -269,10 +263,9 @@ func ExampleFlexibleColumnOrder(ctx context.Context, db *sqlx.DB) error {
 
 	// The builder internally organizes data correctly
 	// Get SQL and column data, then execute bulk insert
-	params := builder.GetBatchParams()
 	columnData := builder.GetColumnData()
 
-	duration, err := InsertBatched(ctx, db, params, columnData...)
+	duration, err := InsertBatched(ctx, db, "employees", builder.GetColumnNames(), columnData...)
 	if err != nil {
 		return fmt.Errorf("bulk insert failed: %w", err)
 	}
