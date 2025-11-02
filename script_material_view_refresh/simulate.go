@@ -8,21 +8,13 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"sql-learn2/bulkinsert"
 )
 
 // TableStats represents row count and max created timestamp for a table.
 type TableStats struct {
 	Count      int            `db:"CNT"`
 	MaxCreated sql.NullString `db:"MAX_CREATED"`
-}
-
-// batchData represents a batch of rows to be inserted.
-type batchData struct {
-	IDs          []int
-	DataValues   []string
-	Descriptions []string
-	Statuses     []string
-	CreatedAts   []string
 }
 
 // timingReport holds duration measurements for different operations.
@@ -43,77 +35,48 @@ func truncateTable(ctx context.Context, db *sqlx.DB) error {
 	return nil
 }
 
-// generateBatchData creates a batch of test data rows.
-func generateBatchData(batchStart, batchCount int, createdAtStr string) *batchData {
-	batch := &batchData{
-		IDs:          make([]int, batchCount),
-		DataValues:   make([]string, batchCount),
-		Descriptions: make([]string, batchCount),
-		Statuses:     make([]string, batchCount),
-		CreatedAts:   make([]string, batchCount),
-	}
+// generateBatchData creates a batch of test data rows with separate column names and data.
+// Returns column names and a 2D array where each inner array represents one row's values.
+func generateBatchData(batchStart, batchCount int, createdAtStr string) ([]string, [][]interface{}) {
+	// Define column names once
+	columnNames := []string{"ID", "DATA_VALUE", "DESCRIPTION", "STATUS", "CREATED_AT"}
+
+	// Create data rows
+	rows := make([][]interface{}, batchCount)
 
 	for i := 0; i < batchCount; i++ {
 		rowNum := batchStart + i
-		batch.IDs[i] = rowNum
-		batch.DataValues[i] = fmt.Sprintf("VAL_%d", rowNum)
-		batch.Descriptions[i] = fmt.Sprintf("Generated row #%d", rowNum)
+		status := "ACTIVE"
 		if rowNum%10 == 0 {
-			batch.Statuses[i] = "INACTIVE"
-		} else {
-			batch.Statuses[i] = "ACTIVE"
+			status = "INACTIVE"
 		}
-		batch.CreatedAts[i] = createdAtStr
+
+		// Each row is a slice of values matching the column order
+		rows[i] = []interface{}{
+			rowNum,                                   // ID
+			fmt.Sprintf("VAL_%d", rowNum),            // DATA_VALUE
+			fmt.Sprintf("Generated row #%d", rowNum), // DESCRIPTION
+			status,                                   // STATUS
+			createdAtStr,                             // CREATED_AT
+		}
 	}
 
-	return batch
+	return columnNames, rows
 }
 
-// insertBulkData inserts bulk data in batches using a transaction.
+// insertBulkData inserts bulk data using column-separated bulk insert.
 func insertBulkData(ctx context.Context, db *sqlx.DB, bulkCount int, createdAtStr string) (time.Duration, error) {
 	log.Printf("Inserting %d rows with CREATED_AT = %s", bulkCount, createdAtStr)
-	insStart := time.Now()
 
-	tx, err := db.BeginTx(ctx, nil)
+	// Generate column names and data separately
+	columnNames, rows := generateBatchData(1, bulkCount, createdAtStr)
+
+	// Use the column-separated bulk insert function
+	insDuration, err := bulkinsert.InsertStructs(ctx, db, "BULK_DATA", columnNames, rows)
 	if err != nil {
-		return 0, fmt.Errorf("begin transaction failed: %w", err)
-	}
-	defer tx.Rollback()
-
-	insertSQL := `INSERT INTO BULK_DATA (ID, DATA_VALUE, DESCRIPTION, STATUS, CREATED_AT)
-		VALUES (:1, :2, :3, :4, TO_DATE(:5, 'YYYY-MM-DD HH24:MI:SS'))`
-	stmt, err := tx.PrepareContext(ctx, insertSQL)
-	if err != nil {
-		return 0, fmt.Errorf("prepare insert statement failed: %w", err)
-	}
-	defer stmt.Close()
-
-	const batchSize = 50000
-	for batchStart := 1; batchStart <= bulkCount; batchStart += batchSize {
-		batchEnd := batchStart + batchSize - 1
-		if batchEnd > bulkCount {
-			batchEnd = bulkCount
-		}
-		batchCount := batchEnd - batchStart + 1
-
-		batch := generateBatchData(batchStart, batchCount, createdAtStr)
-
-		_, err := stmt.ExecContext(ctx, batch.IDs, batch.DataValues, batch.Descriptions, batch.Statuses, batch.CreatedAts)
-		if err != nil {
-			return 0, fmt.Errorf("insert batch starting at row %d failed: %w", batchStart, err)
-		}
-
-		log.Printf("  Inserted %d / %d rows...", batchEnd, bulkCount)
+		return 0, err
 	}
 
-	log.Println("Committing transaction...")
-	commitStart := time.Now()
-	if err := tx.Commit(); err != nil {
-		return 0, fmt.Errorf("commit failed: %w", err)
-	}
-	commitDuration := time.Since(commitStart)
-
-	insDuration := time.Since(insStart) - commitDuration
 	return insDuration, nil
 }
 

@@ -10,22 +10,25 @@ import (
 
 // Config holds all CLI/runtime options for the MV refresh monitor.
 type Config struct {
-	User        string
-	Pass        string
-	Host        string
-	Port        string
-	Service     string
-	DSN         string
-	Table       string
-	Concurrency int
-	Interval    time.Duration
-	Preload     time.Duration
-	Observe     time.Duration
-	OutCSV      string
-	SQLPath     string
-	Client      string
-	Quiet       bool
-	BulkCount   int
+	User          string
+	Pass          string
+	Host          string
+	Port          string
+	Service       string
+	DSN           string
+	Table         string
+	Concurrency   int
+	Interval      time.Duration
+	TPS           int           // Queries per second (overrides Interval if set)
+	MaxCongestion int           // Hard limit on concurrent in-flight queries
+	QueryTimeout  time.Duration // Timeout for individual queries
+	Preload       time.Duration
+	Observe       time.Duration
+	OutCSV        string
+	SQLPath       string
+	Client        string
+	Quiet         bool
+	BulkCount     int
 }
 
 // ParseConfig parses flags/env and returns a Config with defaults applied.
@@ -40,6 +43,9 @@ func ParseConfig() Config {
 	table := flag.String("table", getenvDefault("MV_TABLE", "MV_BULK_DATA"), "Table or view to poll (expects CREATED_AT column)")
 	concurrency := flag.Int("concurrency", intEnv("MV_CONCURRENCY", minInt(4, runtime.NumCPU())), "Number of concurrent pollers")
 	interval := flag.Duration("interval", durationEnv("MV_INTERVAL", 20*time.Millisecond), "Polling interval per goroutine")
+	tps := flag.Int("tps", intEnv("MV_TPS", 200), "Queries per second (overrides interval if > 0, e.g., 20 for 20 QPS)")
+	maxCongestion := flag.Int("maxcongestion", intEnv("MV_MAX_CONGESTION", 1000), "Hard limit on concurrent in-flight queries")
+	queryTimeout := flag.Duration("querytimeout", durationEnv("MV_QUERY_TIMEOUT", 10*time.Second), "Timeout for individual queries")
 	preload := flag.Duration("preload", durationEnv("MV_PRELOAD", 10*time.Second), "Warm-up duration before triggering bulk refresh script")
 	observe := flag.Duration("observe", durationEnv("MV_OBSERVE", 200*time.Second), "Observation window after triggering the script")
 	outCSV := flag.String("out", "", "Path to CSV output (default: logs/mv_monitor_YYYYmmdd_HHMMSS.csv)")
@@ -50,22 +56,25 @@ func ParseConfig() Config {
 	flag.Parse()
 
 	return Config{
-		User:        *user,
-		Pass:        *pass,
-		Host:        *host,
-		Port:        *port,
-		Service:     *service,
-		DSN:         *dsn,
-		Table:       *table,
-		Concurrency: *concurrency,
-		Interval:    *interval,
-		Preload:     *preload,
-		Observe:     *observe,
-		OutCSV:      *outCSV,
-		SQLPath:     *sqlPath,
-		Client:      *client,
-		Quiet:       *quiet,
-		BulkCount:   *bulkCount,
+		User:          *user,
+		Pass:          *pass,
+		Host:          *host,
+		Port:          *port,
+		Service:       *service,
+		DSN:           *dsn,
+		Table:         *table,
+		Concurrency:   *concurrency,
+		Interval:      *interval,
+		TPS:           *tps,
+		MaxCongestion: *maxCongestion,
+		QueryTimeout:  *queryTimeout,
+		Preload:       *preload,
+		Observe:       *observe,
+		OutCSV:        *outCSV,
+		SQLPath:       *sqlPath,
+		Client:        *client,
+		Quiet:         *quiet,
+		BulkCount:     *bulkCount,
 	}
 }
 

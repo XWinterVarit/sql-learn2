@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"sync/atomic"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -58,14 +59,14 @@ func runMonitor(cfg Config) error {
 	log.Printf("Baseline %s MAX(CREATED_AT)=%q", cfg.Table, baseline)
 
 	// Pollers
-	samples, wg := StartPollers(ctx, db, cfg.Table, baseline, cfg.Concurrency, cfg.Interval)
+	samples, wg, congestionCounter := StartPollers(ctx, db, cfg.Table, baseline, cfg.Concurrency, cfg.Interval, cfg.TPS, cfg.MaxCongestion, cfg.QueryTimeout)
 
 	// Trigger
 	triggerAt, resultCh := startTrigger(ctx, db, cfg)
 
 	// Aggregate
 	observeEnd := computeObserveEnd(cfg, triggerAt)
-	firstChangeAt, firstChangeVal, finalBaseline, totalPolls, totalSuccess, totalErrors, p90 := aggregate(samples, w, baseline, !cfg.Quiet, observeEnd)
+	firstChangeAt, firstChangeVal, finalBaseline, totalPolls, totalSuccess, totalErrors, p90, maxCongestion := aggregate(samples, w, baseline, !cfg.Quiet, observeEnd, congestionCounter)
 
 	// Cleanup pollers
 	cancel()
@@ -86,7 +87,7 @@ func runMonitor(cfg Config) error {
 		log.Printf("Simulate script finished in %s", scriptEnd.Sub(scriptStart))
 	}
 
-	printSummary(cfg.Table, csvPath, finalBaseline, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt, firstChangeVal, totalPolls, totalSuccess, totalErrors, p90)
+	printSummary(cfg.Table, csvPath, finalBaseline, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt, firstChangeVal, totalPolls, totalSuccess, totalErrors, p90, maxCongestion)
 	return nil
 }
 
@@ -131,7 +132,7 @@ func startTrigger(ctx context.Context, db *sqlx.DB, cfg Config) (time.Time, <-ch
 }
 
 // aggregate consumes poll samples until observeEnd and writes CSV rows.
-func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbose bool, observeEnd time.Time) (time.Time, string, string, int, int, int, time.Duration) {
+func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbose bool, observeEnd time.Time, congestionCounter *int64) (time.Time, string, string, int, int, int, time.Duration, int) {
 	var firstChangeAt time.Time
 	var firstChangeVal string
 	var windowCount, windowErr, windowChanged int
@@ -140,6 +141,7 @@ func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbos
 	lastSeen := ""
 	var durations []time.Duration       // Collect all query durations for overall p90 calculation
 	var windowDurations []time.Duration // Collect query durations for current window p90
+	var maxCongestion int               // Track maximum congestion observed
 
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
@@ -162,6 +164,12 @@ func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbos
 			totalPolls++
 			durations = append(durations, s.Duration)             // Collect duration for overall p90 calculation
 			windowDurations = append(windowDurations, s.Duration) // Collect duration for window p90 calculation
+
+			// Track maximum congestion from samples
+			if s.Congestion > maxCongestion {
+				maxCongestion = s.Congestion
+			}
+
 			if s.Err != nil || s.Value == "" {
 				windowErr++
 				totalErrors++
@@ -187,13 +195,14 @@ func aggregate(samples <-chan PollSample, w *csv.Writer, baseline string, verbos
 		case <-ticker.C:
 			if verbose {
 				windowP90 := calculateP90(windowDurations)
-				log.Printf("stats: polls=%d errs=%d changed=%d latest=%q baseline=%q firstChange=%v p90=%v", windowCount, windowErr, windowChanged, lastSeen, currentBaseline, !firstChangeAt.IsZero(), windowP90)
+				realTimeCongestion := int(atomic.LoadInt64(congestionCounter))
+				log.Printf("stats: polls=%d errs=%d changed=%d latest=%q baseline=%q firstChange=%v p90=%v congestion=%d", windowCount, windowErr, windowChanged, lastSeen, currentBaseline, !firstChangeAt.IsZero(), windowP90, realTimeCongestion)
 			}
 			windowCount, windowErr, windowChanged = 0, 0, 0
 			windowDurations = nil // Reset window durations for next interval
 		case <-deadline.C:
 			p90 := calculateP90(durations)
-			return firstChangeAt, firstChangeVal, currentBaseline, totalPolls, totalSuccess, totalErrors, p90
+			return firstChangeAt, firstChangeVal, currentBaseline, totalPolls, totalSuccess, totalErrors, p90, maxCongestion
 		}
 	}
 }
@@ -217,7 +226,7 @@ func calculateP90(durations []time.Duration) time.Duration {
 	return sorted[index]
 }
 
-func printSummary(table, csvPath, baseline string, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt time.Time, firstChangeVal string, totalPolls, totalSuccess, totalErrors int, p90 time.Duration) {
+func printSummary(table, csvPath, baseline string, triggerAt, observeEnd, scriptStart, scriptEnd, firstChangeAt time.Time, firstChangeVal string, totalPolls, totalSuccess, totalErrors int, p90 time.Duration, maxCongestion int) {
 	fmt.Println("==== Summary ====")
 	fmt.Printf("Table: %s\n", table)
 	fmt.Printf("Baseline MAX(CREATED_AT): %q\n", baseline)
@@ -240,6 +249,7 @@ func printSummary(table, csvPath, baseline string, triggerAt, observeEnd, script
 	fmt.Printf("Query success count: %d\n", totalSuccess)
 	fmt.Printf("Error count: %d\n", totalErrors)
 	fmt.Printf("P90 query usage time: %v\n", p90)
+	fmt.Printf("Max congestion (peak concurrent queries): %d\n", maxCongestion)
 	if !firstChangeAt.IsZero() {
 		plotTimeline(triggerAt, observeEnd, firstChangeAt)
 	}
