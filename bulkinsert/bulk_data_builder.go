@@ -4,6 +4,38 @@ import (
 	"fmt"
 )
 
+type Column struct {
+	Name  string
+	value interface{}
+}
+
+type Row []Column
+
+type Rows []Row
+
+func (rs Rows) GetColumnsNames() []string {
+	if len(rs) == 0 {
+		return nil
+	}
+	var columnsNames []string
+	for _, col := range rs[0] {
+		columnsNames = append(columnsNames, col.Name)
+	}
+	return columnsNames
+}
+
+func (rs Rows) GetRows() [][]interface{} {
+	var rows [][]interface{}
+	for _, row := range rs {
+		var rowValues []interface{}
+		for _, col := range row {
+			rowValues = append(rowValues, col.value)
+		}
+		rows = append(rows, rowValues)
+	}
+	return rows
+}
+
 // BulkDataBuilder provides an efficient way to build bulk insert data
 // that is optimized for go-ora's column-oriented bulk insert format.
 // It allows human-readable row-by-row data entry while internally
