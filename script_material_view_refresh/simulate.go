@@ -35,15 +35,19 @@ func truncateTable(ctx context.Context, db *sqlx.DB) error {
 	return nil
 }
 
-// generateBatchData creates a batch of test data rows with separate column names and data.
-// Returns column names and a 2D array where each inner array represents one row's values.
+// generateBatchData creates a batch of test data rows using the Row/Column style
+// demonstrated in bulkinsert.ExampleBasicUsage. It returns column names and row data
+// in the legacy return format expected by callers.
 func generateBatchData(batchStart, batchCount int, createdAtStr string) ([]string, [][]interface{}) {
-	// Define column names once
-	columnNames := []string{"ID", "DATA_VALUE", "DESCRIPTION", "STATUS", "CREATED_AT"}
+	// Step 1: Define column names as variables (for pointer-like references)
+	colID := "ID"
+	colDataValue := "DATA_VALUE"
+	colDescription := "DESCRIPTION"
+	colStatus := "STATUS"
+	colCreatedAt := "CREATED_AT"
 
-	// Create data rows
-	rows := make([][]interface{}, batchCount)
-
+	// Step 2: Build rows using bulkinsert.Row/Column for readability and safety
+	rowsDef := make(bulkinsert.Rows, 0, batchCount)
 	for i := 0; i < batchCount; i++ {
 		rowNum := batchStart + i
 		status := "ACTIVE"
@@ -51,17 +55,17 @@ func generateBatchData(batchStart, batchCount int, createdAtStr string) ([]strin
 			status = "INACTIVE"
 		}
 
-		// Each row is a slice of values matching the column order
-		rows[i] = []interface{}{
-			rowNum,                                   // ID
-			fmt.Sprintf("VAL_%d", rowNum),            // DATA_VALUE
-			fmt.Sprintf("Generated row #%d", rowNum), // DESCRIPTION
-			status,                                   // STATUS
-			createdAtStr,                             // CREATED_AT
-		}
+		rowsDef = append(rowsDef, bulkinsert.Row{
+			bulkinsert.Column{Name: colID, Value: rowNum},
+			bulkinsert.Column{Name: colDataValue, Value: fmt.Sprintf("VAL_%d", rowNum)},
+			bulkinsert.Column{Name: colDescription, Value: fmt.Sprintf("Generated row #%d", rowNum)},
+			bulkinsert.Column{Name: colStatus, Value: status},
+			bulkinsert.Column{Name: colCreatedAt, Value: createdAtStr},
+		})
 	}
 
-	return columnNames, rows
+	// Step 3: Convert to the required return types
+	return rowsDef.GetColumnsNames(), rowsDef.GetRows()
 }
 
 // insertBulkData inserts bulk data using the simplest bulkinsert API.

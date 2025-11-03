@@ -6,7 +6,7 @@ import (
 
 type Column struct {
 	Name  string
-	value interface{}
+	Value interface{}
 }
 
 type Row []Column
@@ -29,7 +29,7 @@ func (rs Rows) GetRows() [][]interface{} {
 	for _, row := range rs {
 		var rowValues []interface{}
 		for _, col := range row {
-			rowValues = append(rowValues, col.value)
+			rowValues = append(rowValues, col.Value)
 		}
 		rows = append(rows, rowValues)
 	}
@@ -80,7 +80,7 @@ func (b *BulkDataBuilder) addRowInternal(values []interface{}) error {
 		return fmt.Errorf("expected %d values but got %d", len(b.columnNames), len(values))
 	}
 
-	// Append each value to its corresponding column slice
+	// Append each Value to its corresponding column slice
 	for i, value := range values {
 		b.columnData[i] = append(b.columnData[i], value)
 	}
@@ -94,7 +94,7 @@ func (b *BulkDataBuilder) addRowInternal(values []interface{}) error {
 // while maintaining optimized internal column-oriented storage.
 //
 // Parameters:
-//   - row: Row containing Column structs with Name and value
+//   - row: Row containing Column structs with Name and Value
 //
 // Returns error if column names don't match or are missing.
 func (b *BulkDataBuilder) AddRow(row Row) error {
@@ -121,7 +121,7 @@ func (b *BulkDataBuilder) AddRow(row Row) error {
 	// and use positional values only
 	values := make([]interface{}, len(b.columnNames))
 	for i := range b.columnNames {
-		values[i] = row[i].value
+		values[i] = row[i].Value
 	}
 
 	return b.addRowInternal(values)
