@@ -15,28 +15,20 @@ type BulkDataBuilder struct {
 	capacity    int
 }
 
-// NewBulkDataBuilder creates a new builder with the specified columns and initial capacity.
+// NewBulkDataBuilder creates a new builder with the specified initial capacity.
+// Column names are captured automatically from the first added row.
 // Providing an accurate capacity avoids reallocation as rows are added.
 //
 // Parameters:
-//   - columnNames: slice of column names in order
 //   - capacity: expected number of rows (for pre-allocation)
-func NewBulkDataBuilder(columnNames []string, capacity int) *BulkDataBuilder {
+func NewBulkDataBuilder(capacity int) *BulkDataBuilder {
 	if capacity <= 0 {
 		capacity = 100 // default capacity
 	}
 
-	numCols := len(columnNames)
-	columnData := make([][]interface{}, numCols)
-
-	// Pre-allocate each column slice with the specified capacity
-	for i := 0; i < numCols; i++ {
-		columnData[i] = make([]interface{}, 0, capacity)
-	}
-
 	return &BulkDataBuilder{
-		columnNames: columnNames,
-		columnData:  columnData,
+		columnNames: nil, // will be set from the first row
+		columnData:  nil, // will be initialized when columns are known
 		numRows:     0,
 		capacity:    capacity,
 	}

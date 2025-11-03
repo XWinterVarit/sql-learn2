@@ -64,14 +64,14 @@ func generateBatchData(batchStart, batchCount int, createdAtStr string) ([]strin
 	return columnNames, rows
 }
 
-// insertBulkData inserts bulk data using column-separated bulk insert.
+// insertBulkData inserts bulk data using the simplest bulkinsert API.
 func insertBulkData(ctx context.Context, db *sqlx.DB, bulkCount int, createdAtStr string) (time.Duration, error) {
 	log.Printf("Inserting %d rows with CREATED_AT = %s", bulkCount, createdAtStr)
 
-	// Generate column names and data separately
+	// Generate column names and row-oriented data
 	columnNames, rows := generateBatchData(1, bulkCount, createdAtStr)
 
-	// Use the column-separated bulk insert function
+	// Use bulkinsert.InsertStructs which accepts row-oriented data directly (no transposition needed)
 	insDuration, err := bulkinsert.InsertStructs(ctx, db, "BULK_DATA", columnNames, rows)
 	if err != nil {
 		return 0, err

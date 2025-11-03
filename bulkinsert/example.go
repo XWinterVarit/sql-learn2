@@ -17,9 +17,8 @@ func ExampleBasicUsage(ctx context.Context, db *sqlx.DB) error {
 	colLastName := ColLastName
 	colBalance := ColBalance
 
-	// Step 2: Create a BulkDataBuilder with column names and capacity (no table name needed)
-	columnNames := []string{ColID, ColName, ColLastName, ColBalance}
-	builder := NewBulkDataBuilder(columnNames, 100)
+	// Step 2: Create a BulkDataBuilder with capacity only; column names come from the first row
+	builder := NewBulkDataBuilder(100)
 
 	// Step 3: Add rows using the Row type (array-like interface)
 	// This style is easy to read and maintain with low error prone arrangement
@@ -93,9 +92,8 @@ func ExampleManualControl(ctx context.Context, db *sqlx.DB) error {
 	colLastName := ColLastName
 	colBalance := ColBalance
 
-	// Step 2: Create a BulkDataBuilder with column names and capacity (no table name needed)
-	columnNames := []string{ColID, ColName, ColLastName, ColBalance}
-	builder := NewBulkDataBuilder(columnNames, 100)
+	// Step 2: Create a BulkDataBuilder with capacity only; column names come from the first row
+	builder := NewBulkDataBuilder(100)
 
 	// Step 3: Add rows using the Row type (array-like interface)
 	err := builder.AddRow(Row{
@@ -139,11 +137,8 @@ func ExampleWithGeneratedData(ctx context.Context, db *sqlx.DB) error {
 	// Step 1: Generate rows using the GenerateRow function
 	rows := GenerateRow() // Generates 100 rows with sample data
 
-	// Step 2: Extract column names from the generated rows
-	columnNames := rows.GetColumnsNames()
-
-	// Step 3: Create a BulkDataBuilder
-	builder := NewBulkDataBuilder(columnNames, len(rows))
+	// Step 2: Create a BulkDataBuilder with capacity; column names come from the first row
+	builder := NewBulkDataBuilder(len(rows))
 
 	// Step 4: Add all generated rows to the builder
 	err := builder.AddRows(rows)
@@ -173,10 +168,8 @@ func ExampleWithBatches(ctx context.Context, db *sqlx.DB, totalRows int, batchSi
 	colLastName := ColLastName
 	colBalance := ColBalance
 
-	columnNames := []string{ColID, ColName, ColLastName, ColBalance}
-
-	// Create a reusable builder with batch size capacity
-	builder := NewBulkDataBuilder(columnNames, batchSize)
+	// Create a reusable builder with batch size capacity; column names come from the first row
+	builder := NewBulkDataBuilder(batchSize)
 
 	totalInserted := 0
 
@@ -235,9 +228,8 @@ func ExampleFlexibleColumnOrder(ctx context.Context, db *sqlx.DB) error {
 	colLastName := ColLastName
 	colBalance := ColBalance
 
-	// Builder expects columns in this order
-	columnNames := []string{ColID, ColName, ColLastName, ColBalance}
-	builder := NewBulkDataBuilder(columnNames, 10)
+	// Create a builder with capacity; column names come from the first row
+	builder := NewBulkDataBuilder(10)
 
 	// NOTE: Column names are captured from the first row (or provided at builder creation)
 	// and subsequent rows are matched by position. Keep the same order for all rows.
