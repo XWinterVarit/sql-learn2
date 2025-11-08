@@ -123,8 +123,8 @@ func startTrigger(ctx context.Context, db *sqlx.DB, cfg Config) (time.Time, <-ch
 	go func() {
 		time.Sleep(time.Until(triggerAt))
 		st := time.Now()
-		log.Printf("Triggering bulk load simulation (Go implementation, %d rows)", cfg.BulkCount)
-		err := RunBulkLoadSimulation(ctx, db, cfg.BulkCount)
+		log.Printf("Triggering bulk load simulation (Go implementation, %d rows, batch size %d)", cfg.BulkCount, cfg.BatchSize)
+		err := RunBulkLoadSimulation(ctx, db, cfg.BulkCount, cfg.BatchSize)
 		ed := time.Now()
 		done <- scriptResult{start: st, end: ed, err: err}
 	}()

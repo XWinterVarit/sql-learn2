@@ -29,6 +29,7 @@ type Config struct {
 	Client        string
 	Quiet         bool
 	BulkCount     int
+	BatchSize     int // Number of rows per insert batch when simulating bulk load
 }
 
 // ParseConfig parses flags/env and returns a Config with defaults applied.
@@ -53,6 +54,7 @@ func ParseConfig() Config {
 	client := flag.String("client", getenvDefault("ORACLE_CLI", "auto"), "Oracle CLI to use: auto|sql|sqlplus")
 	quiet := flag.Bool("quiet", false, "Reduce per-interval logs; still prints summary")
 	bulkCount := flag.Int("bulkcount", intEnv("MV_BULK_COUNT", 1000000), "Number of rows to insert during bulk load simulation")
+	batchSize := flag.Int("batchsize", intEnv("MV_BATCH_SIZE", 1000), "Rows per batch for bulk load simulation")
 	flag.Parse()
 
 	return Config{
@@ -75,6 +77,7 @@ func ParseConfig() Config {
 		Client:        *client,
 		Quiet:         *quiet,
 		BulkCount:     *bulkCount,
+		BatchSize:     *batchSize,
 	}
 }
 

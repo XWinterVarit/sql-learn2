@@ -38,7 +38,7 @@ func truncateTable(ctx context.Context, db *sqlx.DB) error {
 // generateBatchData creates a batch of test data rows using the Row/Column style
 // demonstrated in bulkinsert.ExampleBasicUsage. It returns column names and row data
 // in the legacy return format expected by callers.
-func generateBatchData(batchStart, batchCount int, createdAtStr string) ([]string, [][]interface{}) {
+func generateBatchData(batchStart, batchCount int, createdAt time.Time) ([]string, [][]interface{}) {
 	// Step 1: Define column names as variables (for pointer-like references)
 	colID := "ID"
 	colDataValue := "DATA_VALUE"
@@ -60,7 +60,7 @@ func generateBatchData(batchStart, batchCount int, createdAtStr string) ([]strin
 			bulkinsert.Column{Name: colDataValue, Value: fmt.Sprintf("VAL_%d", rowNum)},
 			bulkinsert.Column{Name: colDescription, Value: fmt.Sprintf("Generated row #%d", rowNum)},
 			bulkinsert.Column{Name: colStatus, Value: status},
-			bulkinsert.Column{Name: colCreatedAt, Value: createdAtStr},
+			bulkinsert.Column{Name: colCreatedAt, Value: createdAt},
 		})
 	}
 
@@ -68,20 +68,45 @@ func generateBatchData(batchStart, batchCount int, createdAtStr string) ([]strin
 	return rowsDef.GetColumnsNames(), rowsDef.GetRows()
 }
 
-// insertBulkData inserts bulk data using the simplest bulkinsert API.
-func insertBulkData(ctx context.Context, db *sqlx.DB, bulkCount int, createdAtStr string) (time.Duration, error) {
-	log.Printf("Inserting %d rows with CREATED_AT = %s", bulkCount, createdAtStr)
+// insertBulkData inserts bulk data in batches.
+// batchSize controls rows per batch; if <= 0 it falls back to a single batch of bulkCount.
+func insertBulkData(ctx context.Context, db *sqlx.DB, bulkCount int, batchSize int, createdAt time.Time) (time.Duration, error) {
+	if bulkCount <= 0 {
+		return 0, nil
+	}
+	if batchSize <= 0 || batchSize > bulkCount {
+		batchSize = bulkCount
+	}
+	log.Printf("Inserting %d rows with CREATED_AT = %s in batches of %d", bulkCount, createdAt.Format("2006-01-02 15:04:05"), batchSize)
 
-	// Generate column names and row-oriented data
-	columnNames, rows := generateBatchData(1, bulkCount, createdAtStr)
+	var totalInsert time.Duration
+	startID := 1
+	remaining := bulkCount
+	batchNum := 0
+	totalBatches := (bulkCount + batchSize - 1) / batchSize
+	for remaining > 0 {
+		n := batchSize
+		if remaining < batchSize {
+			n = remaining
+		}
+		batchNum++
 
-	// Use bulkinsert.InsertStructs which accepts row-oriented data directly (no transposition needed)
-	insDuration, err := bulkinsert.InsertStructs(ctx, db, "BULK_DATA", columnNames, rows)
-	if err != nil {
-		return 0, err
+		// Pre-batch progress log so users see ongoing work before each insert starts
+		log.Printf("Batch %d/%d: starting insert of %d rows (remaining before: %d)", batchNum, totalBatches, n, remaining)
+
+		columnNames, rows := generateBatchData(startID, n, createdAt)
+		insDuration, err := bulkinsert.InsertStructs(ctx, db, "BULK_DATA", columnNames, rows)
+		if err != nil {
+			return totalInsert, err
+		}
+		totalInsert += insDuration
+		startID += n
+		remaining -= n
+
+		log.Printf("Batch %d/%d: inserted %d rows (remaining: %d)", batchNum, totalBatches, n, remaining)
 	}
 
-	return insDuration, nil
+	return totalInsert, nil
 }
 
 // commitTransaction commits the given transaction and returns the duration.
@@ -184,16 +209,16 @@ func validatePostRefresh(ctx context.Context, db *sqlx.DB) error {
 //   - ctx: context for database operations
 //   - db: sqlx database connection
 //   - bulkCount: number of rows to insert
+//   - batchSize: rows per insert batch (if <= 0, inserts in a single batch)
 //
 // Returns error if any step fails.
-func RunBulkLoadSimulation(ctx context.Context, db *sqlx.DB, bulkCount int) error {
+func RunBulkLoadSimulation(ctx context.Context, db *sqlx.DB, bulkCount int, batchSize int) error {
 	// Get Thailand time for CREATED_AT
 	loc, err := time.LoadLocation("Asia/Bangkok")
 	if err != nil {
 		return fmt.Errorf("failed to load timezone: %w", err)
 	}
 	createdAt := time.Now().In(loc)
-	createdAtStr := createdAt.Format("2006-01-02 15:04:05")
 
 	log.Println("=== Starting bulk load simulation ===")
 
@@ -204,7 +229,7 @@ func RunBulkLoadSimulation(ctx context.Context, db *sqlx.DB, bulkCount int) erro
 
 	// Step 2: Insert bulk data and commit
 	operationStart := time.Now()
-	insDuration, err := insertBulkData(ctx, db, bulkCount, createdAtStr)
+	insDuration, err := insertBulkData(ctx, db, bulkCount, batchSize, createdAt)
 	if err != nil {
 		return err
 	}

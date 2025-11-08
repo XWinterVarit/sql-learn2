@@ -128,20 +128,109 @@ func InsertStructs(ctx context.Context, db *sqlx.DB, tableName string, columnNam
 	// Organize data by column (transpose from row-oriented to column-oriented)
 	numRows := len(rows)
 	numCols := len(columnNames)
+
+	// Build typed slices per column for go-ora array binding. The driver expects
+	// concrete typed slices (e.g., []int64, []string, []time.Time), not []interface{}.
 	columnData := make([]interface{}, numCols)
 
 	for colIdx := 0; colIdx < numCols; colIdx++ {
-		// Create a slice for this column's values
-		columnSlice := make([]interface{}, numRows)
-
+		// Validate row widths and find a sample non-nil value to determine type
+		var sample interface{}
 		for rowIdx, row := range rows {
 			if len(row) != numCols {
 				return 0, fmt.Errorf("row %d has %d values but expected %d columns", rowIdx, len(row), numCols)
 			}
-			columnSlice[rowIdx] = row[colIdx]
+			if row[colIdx] != nil {
+				sample = row[colIdx]
+				break
+			}
 		}
 
-		columnData[colIdx] = columnSlice
+		switch v := sample.(type) {
+		case int64, int, int32, uint, uint32, uint64:
+			arr := make([]int64, numRows)
+			for i, row := range rows {
+				val := row[colIdx]
+				switch vv := val.(type) {
+				case int64:
+					arr[i] = vv
+				case int:
+					arr[i] = int64(vv)
+				case int32:
+					arr[i] = int64(vv)
+				case uint:
+					arr[i] = int64(vv)
+				case uint32:
+					arr[i] = int64(vv)
+				case uint64:
+					arr[i] = int64(vv)
+				default:
+					return 0, fmt.Errorf("column %d type mismatch: expected integer-like, got %T at row %d", colIdx, val, i)
+				}
+			}
+			columnData[colIdx] = arr
+		case float64, float32:
+			arr := make([]float64, numRows)
+			for i, row := range rows {
+				val := row[colIdx]
+				switch vv := val.(type) {
+				case float64:
+					arr[i] = vv
+				case float32:
+					arr[i] = float64(vv)
+				default:
+					return 0, fmt.Errorf("column %d type mismatch: expected float-like, got %T at row %d", colIdx, val, i)
+				}
+			}
+			columnData[colIdx] = arr
+		case bool:
+			arr := make([]bool, numRows)
+			for i, row := range rows {
+				val := row[colIdx]
+				vb, ok := val.(bool)
+				if !ok {
+					return 0, fmt.Errorf("column %d type mismatch: expected bool, got %T at row %d", colIdx, val, i)
+				}
+				arr[i] = vb
+			}
+			columnData[colIdx] = arr
+		case time.Time:
+			arr := make([]time.Time, numRows)
+			for i, row := range rows {
+				val := row[colIdx]
+				vt, ok := val.(time.Time)
+				if !ok {
+					return 0, fmt.Errorf("column %d type mismatch: expected time.Time, got %T at row %d", colIdx, val, i)
+				}
+				arr[i] = vt
+			}
+			columnData[colIdx] = arr
+		case string:
+			arr := make([]string, numRows)
+			for i, row := range rows {
+				val := row[colIdx]
+				vs, ok := val.(string)
+				if !ok {
+					return 0, fmt.Errorf("column %d type mismatch: expected string, got %T at row %d", colIdx, val, i)
+				}
+				arr[i] = vs
+			}
+			columnData[colIdx] = arr
+		default:
+			// Fallback: use []interface{} as-is. This is less efficient and may not be supported by all drivers.
+			arr := make([]interface{}, numRows)
+			for i, row := range rows {
+				if len(row) != numCols {
+					return 0, fmt.Errorf("row %d has %d values but expected %d columns", i, len(row), numCols)
+				}
+				arr[i] = row[colIdx]
+			}
+			log.Printf("Warning: binding column %s with generic []interface{} (type %T)", columnNames[colIdx], v)
+			columnData[colIdx] = arr
+		}
+
+		// Optional: log chosen binding type to aid troubleshooting
+		log.Printf("Binding column %s as %T (rows=%d)", columnNames[colIdx], columnData[colIdx], numRows)
 	}
 
 	// Insert all data in a single batch
