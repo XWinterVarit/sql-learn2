@@ -49,20 +49,20 @@ func main() {
 	}
 	log.Println("✓ Tables created and sample data inserted")
 
-	// Step 2: Initialize logger
+	// Step 2: Initialize logger and timeline tracker
 	logger := NewEventLogger(db)
+	startTime := time.Now()
+	timeline := NewTimelineTracker(startTime)
 
 	// Step 3: Launch two concurrent goroutines
 	log.Println("Step 2: Launching CHAIN and EARLY goroutines...")
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	startTime := time.Now()
-
 	// Goroutine 1: CHAIN flow
 	go func() {
 		defer wg.Done()
-		if err := RunChainFlow(ctx, db, logger, startTime); err != nil {
+		if err := RunChainFlow(ctx, db, logger, timeline, startTime); err != nil {
 			log.Printf("CHAIN flow error: %v", err)
 		}
 	}()
@@ -70,7 +70,7 @@ func main() {
 	// Goroutine 2: EARLY flow
 	go func() {
 		defer wg.Done()
-		if err := RunEarlyFlow(ctx, db, logger, startTime); err != nil {
+		if err := RunEarlyFlow(ctx, db, logger, timeline, startTime); err != nil {
 			log.Printf("EARLY flow error: %v", err)
 		}
 	}()
@@ -85,7 +85,10 @@ func main() {
 		log.Printf("Failed to display event log: %v", err)
 	}
 
-	// Step 5: Display final state of table C
+	// Step 5: Display timeline graph
+	timeline.RenderTimeline()
+
+	// Step 6: Display final state of table C
 	log.Println("\n=== Final rows in table C ===")
 	if err := DisplayTableC(ctx, db); err != nil {
 		log.Printf("Failed to display table C: %v", err)

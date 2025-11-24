@@ -11,7 +11,7 @@ import (
 //  2. UPDATE C
 //  3. wait 15 seconds (holding the row lock)
 //  4. COMMIT
-func RunEarlyFlow(ctx context.Context, db *sql.DB, logger *EventLogger, startTime time.Time) error {
+func RunEarlyFlow(ctx context.Context, db *sql.DB, logger *EventLogger, timeline *TimelineTracker, startTime time.Time) error {
 	logger.Log(ctx, "EARLY", "BEGIN: sleeping 2s before updating C")
 
 	// Wait 2 seconds
@@ -26,18 +26,20 @@ func RunEarlyFlow(ctx context.Context, db *sql.DB, logger *EventLogger, startTim
 	defer tx.Rollback()
 
 	// Update B
-
+	timeline.RecordStart("EARLY", "B")
 	logger.Log(ctx, "EARLY", "Updating B.id=1 (data column)")
 	_, err = tx.ExecContext(ctx, "UPDATE B SET data = 'UPDATED_EARLY' WHERE id = 1")
+	timeline.RecordEnd("EARLY", "B")
 	if err != nil {
 		logger.Log(ctx, "EARLY", "ERROR: failed to update B: "+err.Error())
 		return err
 	}
 
 	// Update C
-
+	timeline.RecordStart("EARLY", "C")
 	logger.Log(ctx, "EARLY", "Updating C.id=1 (early_data column)")
 	_, err = tx.ExecContext(ctx, "UPDATE C SET early_data = 'UPDATED_EARLY' WHERE id = 1")
+	timeline.RecordEnd("EARLY", "C")
 	if err != nil {
 		logger.Log(ctx, "EARLY", "ERROR: failed to update C: "+err.Error())
 		return err
@@ -53,6 +55,7 @@ func RunEarlyFlow(ctx context.Context, db *sql.DB, logger *EventLogger, startTim
 		logger.Log(ctx, "EARLY", "ERROR: commit failed: "+err.Error())
 		return err
 	}
+	timeline.RecordCommit("EARLY")
 
 	logger.Log(ctx, "EARLY", "DONE")
 	return nil
