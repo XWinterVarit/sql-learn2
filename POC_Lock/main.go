@@ -79,6 +79,9 @@ func main() {
 	wg.Wait()
 	log.Println("✓ Both flows completed")
 
+	// Close logger to ensure all events are flushed to DB
+	logger.Close()
+
 	// Step 4: Display event log
 	log.Println("\n=== Event Log (ordered by time) ===")
 	if err := DisplayEventLog(ctx, db); err != nil {

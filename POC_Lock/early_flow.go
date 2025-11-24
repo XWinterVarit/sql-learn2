@@ -12,6 +12,13 @@ import (
 //  3. wait 15 seconds (holding the row lock)
 //  4. COMMIT
 func RunEarlyFlow(ctx context.Context, db *sql.DB, logger *EventLogger, timeline *TimelineTracker, startTime time.Time) error {
+	// Launch shadow timeline for expectations (Ideal Schedule)
+	go func() {
+		time.Sleep(2 * time.Second)
+		timeline.RecordExpected("EARLY", "B")
+		timeline.RecordExpected("EARLY", "C")
+	}()
+
 	logger.Log(ctx, "EARLY", "BEGIN: sleeping 2s before updating C")
 
 	// Wait 2 seconds

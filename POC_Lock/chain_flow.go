@@ -14,6 +14,15 @@ import (
 //  5. UPDATE C
 //  6. COMMIT
 func RunChainFlow(ctx context.Context, db *sql.DB, logger *EventLogger, timeline *TimelineTracker, startTime time.Time) error {
+	// Launch shadow timeline for expectations (Ideal Schedule)
+	go func() {
+		timeline.RecordExpected("CHAIN", "A")
+		time.Sleep(3 * time.Second)
+		timeline.RecordExpected("CHAIN", "B")
+		time.Sleep(2 * time.Second)
+		timeline.RecordExpected("CHAIN", "C")
+	}()
+
 	logger.Log(ctx, "CHAIN", "BEGIN: select for update on A")
 
 	// Start a transaction
@@ -36,7 +45,7 @@ func RunChainFlow(ctx context.Context, db *sql.DB, logger *EventLogger, timeline
 	logger.Log(ctx, "CHAIN", "Locked A.id=1; sleeping 10s")
 
 	// Wait 10 seconds
-	time.Sleep(1 * time.Second)
+	time.Sleep(3 * time.Second)
 
 	// Update B
 	timeline.RecordStart("CHAIN", "B")
@@ -55,6 +64,8 @@ func RunChainFlow(ctx context.Context, db *sql.DB, logger *EventLogger, timeline
 	timeline.RecordStart("CHAIN", "C")
 	logger.Log(ctx, "CHAIN", "Updating C.id=1 (chain_data column)")
 	_, err = tx.ExecContext(ctx, "UPDATE C SET chain_data = 'UPDATED_BY_CHAIN' WHERE id = 1")
+	timeline.RecordEnd("CHAIN", "C")
+
 	if err != nil {
 		logger.Log(ctx, "CHAIN", "ERROR: failed to update C: "+err.Error())
 		return err
@@ -63,7 +74,6 @@ func RunChainFlow(ctx context.Context, db *sql.DB, logger *EventLogger, timeline
 
 	logger.Log(ctx, "CHAIN", "C updated; sleeping 2s")
 	time.Sleep(2 * time.Second)
-	timeline.RecordEnd("CHAIN", "C")
 
 	// Commit
 	logger.Log(ctx, "CHAIN", "Committing")
