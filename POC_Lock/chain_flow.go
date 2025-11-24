@@ -34,7 +34,7 @@ func RunChainFlow(ctx context.Context, db *sql.DB, logger *EventLogger, startTim
 	logger.Log(ctx, "CHAIN", "Locked A.id=1; sleeping 10s")
 
 	// Wait 10 seconds
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// Update B
 	logger.Log(ctx, "CHAIN", "Updating B.id=1")
@@ -45,7 +45,7 @@ func RunChainFlow(ctx context.Context, db *sql.DB, logger *EventLogger, startTim
 	}
 
 	logger.Log(ctx, "CHAIN", "B updated; sleeping 10s")
-	time.Sleep(5 * time.Second)
+	time.Sleep(2 * time.Second)
 
 	// Update C
 	logger.Log(ctx, "CHAIN", "Updating C.id=1 (chain_data column)")
