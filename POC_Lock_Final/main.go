@@ -83,26 +83,28 @@ func main() {
 
 	// NONTX Flow (Reader)
 	// Select B at 3, 6, 9, 12 seconds
-	nontx := runner.AddNonTxFlow("TX")
-
-	nontx.AddWait(5 * time.Second)
-	//nontx.AddUpdate("B", "Update B (Sleep 10s)", "BEGIN UPDATE B SET data = 'NONTX_SLEEP' WHERE id = 1; DBMS_SESSION.SLEEP(1); END;")
 	/*
-		nontx.AddUpdate(
-			"B",
-			"Update B (No Sleep)",
-			"UPDATE B SET data = 'NONTX_SLEEP' WHERE id = 2",
-		)
-	*/
+		nontx := runner.AddNonTxFlow("TX")
 
-	nontx.AddWait(3 * time.Second)
-	nontx.AddQuery("B", "Read B (3s)", "SELECT id, data FROM B WHERE id = 1")
-	nontx.AddWait(3 * time.Second)
-	nontx.AddQuery("B", "Read B (6s)", "SELECT id, data FROM B WHERE id = 1")
-	nontx.AddWait(3 * time.Second)
-	nontx.AddQuery("B", "Read B (9s)", "SELECT id, data FROM B WHERE id = 1")
-	nontx.AddWait(3 * time.Second)
-	nontx.AddQuery("B", "Read B (12s)", "SELECT id, data FROM B WHERE id = 1")
+		nontx.AddWait(5 * time.Second)
+		//nontx.AddUpdate("B", "Update B (Sleep 10s)", "BEGIN UPDATE B SET data = 'NONTX_SLEEP' WHERE id = 1; DBMS_SESSION.SLEEP(1); END;")
+
+			nontx.AddUpdate(
+				"B",
+				"Update B (No Sleep)",
+				"UPDATE B SET data = 'NONTX_SLEEP' WHERE id = 2",
+			)
+
+
+		nontx.AddWait(3 * time.Second)
+		nontx.AddQuery("B", "Read B (3s)", "SELECT id, data FROM B WHERE id = 1")
+		nontx.AddWait(3 * time.Second)
+		nontx.AddQuery("B", "Read B (6s)", "SELECT id, data FROM B WHERE id = 1")
+		nontx.AddWait(3 * time.Second)
+		nontx.AddQuery("B", "Read B (9s)", "SELECT id, data FROM B WHERE id = 1")
+		nontx.AddWait(3 * time.Second)
+		nontx.AddQuery("B", "Read B (12s)", "SELECT id, data FROM B WHERE id = 1")
+	*/
 
 	// Step 4: Run All Flows
 	runner.RunAll(ctx)
