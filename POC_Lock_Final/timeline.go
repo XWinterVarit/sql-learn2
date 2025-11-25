@@ -93,7 +93,7 @@ type FlowTimeline struct {
 }
 
 // RenderTimeline generates and prints an ASCII timeline graph
-func (t *TimelineTracker) RenderTimeline() {
+func (t *TimelineTracker) RenderTimeline(showExpected bool) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -158,7 +158,12 @@ func (t *TimelineTracker) RenderTimeline() {
 	totalDuration := maxTime.Sub(t.start).Seconds()
 
 	// Create ordered flow list
-	displayFlows := []string{"CHAIN EXPECTED", "CHAIN", "EARLY EXPECTED", "EARLY"}
+	var displayFlows []string
+	if showExpected {
+		displayFlows = []string{"CHAIN EXPECTED", "CHAIN", "EARLY EXPECTED", "EARLY", "NONTX EXPECTED", "NONTX"}
+	} else {
+		displayFlows = []string{"CHAIN", "EARLY", "TX"}
+	}
 	timelines := make([]FlowTimeline, 0)
 	for _, flowName := range displayFlows {
 		if segs, ok := flowSegments[flowName]; ok {

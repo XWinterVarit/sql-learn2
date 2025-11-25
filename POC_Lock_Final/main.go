@@ -20,6 +20,7 @@ func main() {
 	host := flag.String("host", getEnv("ORA_HOST", "localhost"), "Oracle host")
 	port := flag.String("port", getEnv("ORA_PORT", "1521"), "Oracle port")
 	service := flag.String("service", getEnv("ORA_SERVICE", "XE"), "Oracle service name")
+	hideExpected := flag.Bool("hide-expected", true, "Hide expected timeline flows")
 	flag.Parse()
 
 	// Build DSN
@@ -75,17 +76,40 @@ func main() {
 	// 3. Update C
 	// 4. Wait 15s (holding lock) -> Commit
 	early := NewTxFlow("EARLY", db, logger, timeline)
-	early.AddWait(5 * time.Second)
+	early.AddWait(2 * time.Second)
 	early.AddUpdate("B", "Updating B.id=1 (data column)", "UPDATE B SET data = 'UPDATED_EARLY' WHERE id = 1")
 	early.AddUpdate("C", "Updating C.id=1 (early_data column)", "UPDATE C SET early_data = 'UPDATED_EARLY' WHERE id = 1")
 	early.AddWait(15 * time.Second)
 	early.AddUpdate("C", "Updating C.id=1 (early_data column)", "UPDATE C SET early_data = 'UPDATED_EARLY 2' WHERE id = 1")
 	early.AddWait(5 * time.Second)
 
+	// NONTX Flow (Reader)
+	// Select B at 3, 6, 9, 12 seconds
+	nontx := NewTxFlow("TX", db, logger, timeline)
+
+	nontx.AddWait(5 * time.Second)
+	//nontx.AddUpdate("B", "Update B (Sleep 10s)", "BEGIN UPDATE B SET data = 'NONTX_SLEEP' WHERE id = 1; DBMS_SESSION.SLEEP(1); END;")
+	/*
+		nontx.AddUpdate(
+			"B",
+			"Update B (No Sleep)",
+			"UPDATE B SET data = 'NONTX_SLEEP' WHERE id = 2",
+		)
+	*/
+
+	nontx.AddWait(3 * time.Second)
+	nontx.AddQuery("B", "Read B (3s)", "SELECT id, data FROM B WHERE id = 1")
+	nontx.AddWait(3 * time.Second)
+	nontx.AddQuery("B", "Read B (6s)", "SELECT id, data FROM B WHERE id = 1")
+	nontx.AddWait(3 * time.Second)
+	nontx.AddQuery("B", "Read B (9s)", "SELECT id, data FROM B WHERE id = 1")
+	nontx.AddWait(3 * time.Second)
+	nontx.AddQuery("B", "Read B (12s)", "SELECT id, data FROM B WHERE id = 1")
+
 	// Step 4: Launch two concurrent goroutines
-	log.Println("Step 4: Launching CHAIN and EARLY goroutines...")
+	log.Println("Step 4: Launching CHAIN, EARLY, and NONTX goroutines...")
 	var wg sync.WaitGroup
-	wg.Add(2)
+	wg.Add(3)
 
 	// Goroutine 1: CHAIN flow
 	go func() {
@@ -103,6 +127,14 @@ func main() {
 		}
 	}()
 
+	// Goroutine 3: NONTX flow
+	go func() {
+		defer wg.Done()
+		if err := nontx.Execute(ctx); err != nil {
+			log.Printf("NONTX flow error: %v", err)
+		}
+	}()
+
 	// Wait for both to complete
 	wg.Wait()
 	log.Println("✓ Both flows completed")
@@ -117,7 +149,7 @@ func main() {
 	}
 
 	// Step 6: Display timeline graph
-	timeline.RenderTimeline()
+	timeline.RenderTimeline(!*hideExpected)
 
 	// Step 7: Display final state of table C
 	log.Println("\n=== Final rows in table C ===")
