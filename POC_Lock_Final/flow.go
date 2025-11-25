@@ -21,15 +21,17 @@ type Step struct {
 	Label    string
 	SQL      string
 	Duration time.Duration
+	Timeout  time.Duration
 }
 
 // TxFlow represents a transaction flow with ordered steps
 type TxFlow struct {
-	Name     string
-	Steps    []Step
-	db       *sql.DB
-	logger   *EventLogger
-	timeline *TimelineTracker
+	Name      string
+	Steps     []Step
+	db        *sql.DB
+	logger    *EventLogger
+	timeline  *TimelineTracker
+	TxTimeout time.Duration
 }
 
 // NewTxFlow creates a new flow builder
@@ -43,13 +45,24 @@ func NewTxFlow(name string, db *sql.DB, logger *EventLogger, timeline *TimelineT
 	}
 }
 
+// SetTxTimeout sets the overall transaction timeout
+func (f *TxFlow) SetTxTimeout(d time.Duration) *TxFlow {
+	f.TxTimeout = d
+	return f
+}
+
 // AddQuery adds a SELECT (or SELECT FOR UPDATE) step
-func (f *TxFlow) AddQuery(table, label, sqlQuery string) *TxFlow {
+func (f *TxFlow) AddQuery(table, label, sqlQuery string, options ...time.Duration) *TxFlow {
+	var timeout time.Duration
+	if len(options) > 0 {
+		timeout = options[0]
+	}
 	f.Steps = append(f.Steps, Step{
-		Type:  StepSQL,
-		Table: table,
-		Label: label,
-		SQL:   sqlQuery,
+		Type:    StepSQL,
+		Table:   table,
+		Label:   label,
+		SQL:     sqlQuery,
+		Timeout: timeout,
 	})
 	return f
 }
@@ -82,8 +95,15 @@ func (f *TxFlow) Execute(ctx context.Context) error {
 	// 2. Run Actual Flow
 	f.logger.Log(ctx, f.Name, "BEGIN")
 
+	txCtx := ctx
+	if f.TxTimeout > 0 {
+		var cancel context.CancelFunc
+		txCtx, cancel = context.WithTimeout(ctx, f.TxTimeout)
+		defer cancel()
+	}
+
 	// Start Transaction
-	tx, err := f.db.BeginTx(ctx, nil)
+	tx, err := f.db.BeginTx(txCtx, nil)
 	if err != nil {
 		f.logger.Log(ctx, f.Name, "ERROR: failed to begin transaction: "+err.Error())
 		return err
@@ -103,7 +123,14 @@ func (f *TxFlow) Execute(ctx context.Context) error {
 			f.logger.Log(ctx, f.Name, step.Label)
 
 			// Execute SQL
-			if err := f.execSQL(ctx, tx, step.SQL); err != nil {
+			stepCtx := txCtx
+			if step.Timeout > 0 {
+				var cancel context.CancelFunc
+				stepCtx, cancel = context.WithTimeout(txCtx, step.Timeout)
+				defer cancel()
+			}
+
+			if err := f.execSQL(stepCtx, tx, step.SQL); err != nil {
 				f.logger.Log(ctx, f.Name, fmt.Sprintf("ERROR: %v: %v", step.Label, err))
 				return err
 			}
@@ -203,12 +230,17 @@ func NewNonTxFlow(name string, db *sql.DB, logger *EventLogger, timeline *Timeli
 }
 
 // AddQuery adds a SELECT step
-func (f *NonTxFlow) AddQuery(table, label, sqlQuery string) *NonTxFlow {
+func (f *NonTxFlow) AddQuery(table, label, sqlQuery string, options ...time.Duration) *NonTxFlow {
+	var timeout time.Duration
+	if len(options) > 0 {
+		timeout = options[0]
+	}
 	f.Steps = append(f.Steps, Step{
-		Type:  StepSQL,
-		Table: table,
-		Label: label,
-		SQL:   sqlQuery,
+		Type:    StepSQL,
+		Table:   table,
+		Label:   label,
+		SQL:     sqlQuery,
+		Timeout: timeout,
 	})
 	return f
 }
@@ -251,7 +283,14 @@ func (f *NonTxFlow) Execute(ctx context.Context) error {
 			f.logger.Log(ctx, f.Name, step.Label)
 
 			// Execute SQL directly on DB
-			if err := f.execSQL(ctx, step.SQL); err != nil {
+			stepCtx := ctx
+			if step.Timeout > 0 {
+				var cancel context.CancelFunc
+				stepCtx, cancel = context.WithTimeout(ctx, step.Timeout)
+				defer cancel()
+			}
+
+			if err := f.execSQL(stepCtx, step.SQL); err != nil {
 				f.logger.Log(ctx, f.Name, fmt.Sprintf("ERROR: %v: %v", step.Label, err))
 				return err
 			}
