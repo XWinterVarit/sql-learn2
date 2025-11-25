@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"sync"
 	"time"
 
 	_ "github.com/sijms/go-ora/v2"
@@ -50,19 +49,18 @@ func main() {
 	}
 	log.Println("✓ Tables created and sample data inserted")
 
-	// Step 2: Initialize logger and timeline tracker
-	logger := NewEventLogger(db)
-	startTime := time.Now()
-	timeline := NewTimelineTracker(startTime)
+	// Step 2: Initialize Runner
+	runner := NewRunner(db)
+	defer runner.Close()
 
 	// Step 3: Define Flows
-	log.Println("Step 3: Defining CHAIN and EARLY flows...")
+	log.Println("Step 3: Defining Flows...")
 
 	// CHAIN Flow
 	// 1. Lock A -> Wait 3s
 	// 2. Update B -> Wait 2s
 	// 3. Update C -> Wait 2s -> Commit
-	chain := NewTxFlow("CHAIN", db, logger, timeline)
+	chain := runner.AddTxFlow("CHAIN")
 	chain.AddQuery("A", "Locked A.id=1", "SELECT id FROM A WHERE id = 1 FOR UPDATE")
 	chain.AddWait(4 * time.Second)
 	chain.AddUpdate("B", "Updating B.id=1", "UPDATE B SET data = 'B1_UPDATED_BY_CHAIN' WHERE id = 1")
@@ -75,7 +73,7 @@ func main() {
 	// 2. Update B
 	// 3. Update C
 	// 4. Wait 15s (holding lock) -> Commit
-	early := NewTxFlow("EARLY", db, logger, timeline)
+	early := runner.AddTxFlow("EARLY")
 	early.AddWait(2 * time.Second)
 	early.AddUpdate("B", "Updating B.id=1 (data column)", "UPDATE B SET data = 'UPDATED_EARLY' WHERE id = 1")
 	early.AddUpdate("C", "Updating C.id=1 (early_data column)", "UPDATE C SET early_data = 'UPDATED_EARLY' WHERE id = 1")
@@ -85,7 +83,7 @@ func main() {
 
 	// NONTX Flow (Reader)
 	// Select B at 3, 6, 9, 12 seconds
-	nontx := NewTxFlow("TX", db, logger, timeline)
+	nontx := runner.AddNonTxFlow("TX")
 
 	nontx.AddWait(5 * time.Second)
 	//nontx.AddUpdate("B", "Update B (Sleep 10s)", "BEGIN UPDATE B SET data = 'NONTX_SLEEP' WHERE id = 1; DBMS_SESSION.SLEEP(1); END;")
@@ -106,50 +104,11 @@ func main() {
 	nontx.AddWait(3 * time.Second)
 	nontx.AddQuery("B", "Read B (12s)", "SELECT id, data FROM B WHERE id = 1")
 
-	// Step 4: Launch two concurrent goroutines
-	log.Println("Step 4: Launching CHAIN, EARLY, and NONTX goroutines...")
-	var wg sync.WaitGroup
-	wg.Add(3)
+	// Step 4: Run All Flows
+	runner.RunAll(ctx)
 
-	// Goroutine 1: CHAIN flow
-	go func() {
-		defer wg.Done()
-		if err := chain.Execute(ctx); err != nil {
-			log.Printf("CHAIN flow error: %v", err)
-		}
-	}()
-
-	// Goroutine 2: EARLY flow
-	go func() {
-		defer wg.Done()
-		if err := early.Execute(ctx); err != nil {
-			log.Printf("EARLY flow error: %v", err)
-		}
-	}()
-
-	// Goroutine 3: NONTX flow
-	go func() {
-		defer wg.Done()
-		if err := nontx.Execute(ctx); err != nil {
-			log.Printf("NONTX flow error: %v", err)
-		}
-	}()
-
-	// Wait for both to complete
-	wg.Wait()
-	log.Println("✓ Both flows completed")
-
-	// Close logger to ensure all events are flushed to DB
-	logger.Close()
-
-	// Step 5: Display event log
-	log.Println("\n=== Event Log (ordered by time) ===")
-	if err := DisplayEventLog(ctx, db); err != nil {
-		log.Printf("Failed to display event log: %v", err)
-	}
-
-	// Step 6: Display timeline graph
-	timeline.RenderTimeline(!*hideExpected)
+	// Step 5: Report Results
+	runner.Report(ctx, !*hideExpected)
 
 	// Step 7: Display final state of table C
 	log.Println("\n=== Final rows in table C ===")
