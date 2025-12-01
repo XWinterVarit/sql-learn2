@@ -57,29 +57,26 @@ func main() {
 	log.Println("Step 3: Defining Flows...")
 
 	// CHAIN Flow
-	// 1. Lock A -> Wait 3s
-	// 2. Update B -> Wait 2s
-	// 3. Update C -> Wait 2s -> Commit
-	chain := runner.AddTxFlow("CHAIN")
+	// 1. Lock A
+	// 2. Update B (Wait 4s inside)
+	// 3. Update C (Wait 2s inside)
+	// 4. Wait 2s inside -> Commit
+	chain := runner.AddTxFlow("CHAIN").SetTxTimeout(5 * time.Second)
 	chain.AddQuery("A", "Locked A.id=1", "SELECT id FROM A WHERE id = 1 FOR UPDATE")
-	chain.AddWait(4 * time.Second)
-	chain.AddUpdate("B", "Updating B.id=1", "UPDATE B SET data = 'B1_UPDATED_BY_CHAIN' WHERE id = 1")
-	chain.AddWait(2 * time.Second)
-	chain.AddUpdate("C", "Updating C.id=1", "UPDATE C SET chain_data = 'UPDATED_BY_CHAIN' WHERE id = 1")
-	chain.AddWait(2 * time.Second)
+	chain.AddUpdate("B", "Updating B.id=1", "BEGIN DBMS_SESSION.SLEEP(4); UPDATE B SET data = 'B1_UPDATED_BY_CHAIN' WHERE id = 1; END;")
+	chain.AddUpdate("C", "Updating C.id=1", "BEGIN DBMS_SESSION.SLEEP(2); UPDATE C SET chain_data = 'UPDATED_BY_CHAIN' WHERE id = 1; END;")
+	chain.AddUpdate("SLEEP", "Wait 2s", "BEGIN DBMS_SESSION.SLEEP(2); END;")
 
 	// EARLY Flow
-	// 1. Wait 2s
-	// 2. Update B
-	// 3. Update C
-	// 4. Wait 15s (holding lock) -> Commit
-	early := runner.AddTxFlow("EARLY")
-	early.AddWait(2 * time.Second)
-	early.AddUpdate("B", "Updating B.id=1 (data column)", "UPDATE B SET data = 'UPDATED_EARLY' WHERE id = 1")
+	// 1. Update B (Wait 2s inside)
+	// 2. Update C
+	// 3. Update C (Wait 15s inside)
+	// 4. Wait 5s inside -> Commit
+	early := runner.AddTxFlow("EARLY").SetTxTimeout(7 * time.Second)
+	early.AddUpdate("B", "Updating B.id=1 (data column)", "BEGIN DBMS_SESSION.SLEEP(2); UPDATE B SET data = 'UPDATED_EARLY' WHERE id = 1; END;")
 	early.AddUpdate("C", "Updating C.id=1 (early_data column)", "UPDATE C SET early_data = 'UPDATED_EARLY' WHERE id = 1")
-	early.AddWait(15 * time.Second)
-	early.AddUpdate("C", "Updating C.id=1 (early_data column)", "UPDATE C SET early_data = 'UPDATED_EARLY 2' WHERE id = 1")
-	early.AddWait(5 * time.Second)
+	early.AddUpdate("C", "Updating C.id=1 (early_data column)", "BEGIN DBMS_SESSION.SLEEP(15); UPDATE C SET early_data = 'UPDATED_EARLY 2' WHERE id = 1; END;")
+	early.AddUpdate("SLEEP", "Wait 5s", "BEGIN DBMS_SESSION.SLEEP(5); END;")
 
 	// NONTX Flow (Reader)
 	// Select B at 3, 6, 9, 12 seconds

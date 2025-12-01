@@ -132,6 +132,7 @@ func (f *TxFlow) Execute(ctx context.Context) error {
 
 			if err := f.execSQL(stepCtx, tx, step.SQL); err != nil {
 				f.logger.Log(ctx, f.Name, fmt.Sprintf("ERROR: %v: %v", step.Label, err))
+				f.timeline.RecordRollback(f.Name)
 				return err
 			}
 
@@ -144,6 +145,7 @@ func (f *TxFlow) Execute(ctx context.Context) error {
 	f.logger.Log(ctx, f.Name, "Committing")
 	if err := tx.Commit(); err != nil {
 		f.logger.Log(ctx, f.Name, "ERROR: commit failed: "+err.Error())
+		f.timeline.RecordRollback(f.Name)
 		return err
 	}
 	f.timeline.RecordCommit(f.Name)
@@ -160,6 +162,10 @@ func (f *TxFlow) execSQL(ctx context.Context, tx *sql.Tx, sqlStmt string) error 
 			return err
 		}
 		defer rows.Close()
+
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 
 		results, err := processRows(rows)
 		if err != nil {
@@ -178,6 +184,10 @@ func (f *TxFlow) execSQL(ctx context.Context, tx *sql.Tx, sqlStmt string) error 
 	// For UPDATE/INSERT/DELETE
 	res, err := tx.ExecContext(ctx, sqlStmt)
 	if err != nil {
+		return err
+	}
+
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if affected, err := res.RowsAffected(); err == nil {
@@ -313,6 +323,10 @@ func (f *NonTxFlow) execSQL(ctx context.Context, sqlStmt string) error {
 		}
 		defer rows.Close()
 
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
 		results, err := processRows(rows)
 		if err != nil {
 			return err
@@ -329,6 +343,9 @@ func (f *NonTxFlow) execSQL(ctx context.Context, sqlStmt string) error {
 
 	res, err := f.db.ExecContext(ctx, sqlStmt)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if affected, err := res.RowsAffected(); err == nil {

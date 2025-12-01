@@ -79,6 +79,18 @@ func (t *TimelineTracker) RecordCommit(flow string) {
 	})
 }
 
+// RecordRollback records a transaction rollback event
+func (t *TimelineTracker) RecordRollback(flow string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.events = append(t.events, TimelineEvent{
+		Flow:      flow,
+		Table:     "",
+		EventType: "ROLLBACK",
+		Time:      time.Now(),
+	})
+}
+
 // Segment represents a time segment for a table operation
 type Segment struct {
 	Table string
@@ -107,10 +119,11 @@ func (t *TimelineTracker) RenderTimeline(showExpected bool) {
 		return t.events[i].Time.Before(t.events[j].Time)
 	})
 
-	// Build segments for each flow and collect commit times
+	// Build segments for each flow and collect commit/rollback times
 	flowSegments := make(map[string][]Segment)
-	commitTimes := make(map[string]float64)          // flow -> commit time in seconds
-	pending := make(map[string]map[string]time.Time) // flow -> table -> start time
+	commitTimes := make(map[string]float64)   // flow -> commit time in seconds
+	rollbackTimes := make(map[string]float64) // flow -> rollback time in seconds
+	pending := make(map[string]map[string]time.Time)
 
 	for _, event := range t.events {
 		// Handle EXPECTED events separately
@@ -145,6 +158,8 @@ func (t *TimelineTracker) RenderTimeline(showExpected bool) {
 			}
 		} else if event.EventType == "COMMIT" {
 			commitTimes[event.Flow] = event.Time.Sub(t.start).Seconds()
+		} else if event.EventType == "ROLLBACK" {
+			rollbackTimes[event.Flow] = event.Time.Sub(t.start).Seconds()
 		}
 	}
 
@@ -201,6 +216,9 @@ func (t *TimelineTracker) RenderTimeline(showExpected bool) {
 
 		// Place segments
 		for _, seg := range tl.Segments {
+			if seg.Table == "SLEEP" {
+				continue
+			}
 			startPos := int(math.Round(seg.Start * scale))
 			endPos := int(math.Round(seg.End * scale))
 
@@ -245,6 +263,17 @@ func (t *TimelineTracker) RenderTimeline(showExpected bool) {
 			}
 			if commitPos >= 0 && commitPos < timelineWidth {
 				line[commitPos] = 'X'
+			}
+		}
+
+		// Place rollback marker "R" if rollback event exists for this flow
+		if rollbackTime, ok := rollbackTimes[tl.Flow]; ok {
+			rollbackPos := int(math.Round(rollbackTime * scale))
+			if rollbackPos >= timelineWidth {
+				rollbackPos = timelineWidth - 1
+			}
+			if rollbackPos >= 0 && rollbackPos < timelineWidth {
+				line[rollbackPos] = 'R'
 			}
 		}
 
