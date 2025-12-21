@@ -1,0 +1,24 @@
+- write code to have this
+
+CSVReader
+
+    - Set
+        hasHeader
+        hasTail
+
+    - Functions (all value are string)
+        Header(index) (value, error) <-- error mean out of index
+        ValidateHeader(index, mustBe) error
+        ValidateHeaderCount (expected) error
+        Tail(index) (value, error) <-- error mean out of index
+        ValidateTail (index, mustBe) error
+        ValidateTailCount (expected) error
+
+        ReadAll () ([]CSVLine, error)
+        ReadChunk(maxChunk) ([]CSVLine, count, error)
+        CountBodyRow() int
+
+CSVLine
+    - Functions
+        CountFields() int
+        Value(index) string
