@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"sql-learn2/bulkinsert"
+	"sql-learn2/bulkload"
 )
 
 // TableStats represents row count and max created timestamp for a table.
@@ -25,90 +25,6 @@ type timingReport struct {
 	TotalDuration   time.Duration
 }
 
-// truncateTable truncates the BULK_DATA table.
-func truncateTable(ctx context.Context, db *sqlx.DB) error {
-	log.Println("Truncating BULK_DATA ...")
-	_, err := db.ExecContext(ctx, "TRUNCATE TABLE BULK_DATA")
-	if err != nil {
-		return fmt.Errorf("truncate failed: %w", err)
-	}
-	return nil
-}
-
-// generateBatchData creates a batch of test data rows using the Row/Column style
-// demonstrated in bulkinsert.ExampleBasicUsage. It returns column names and row data
-// in the legacy return format expected by callers.
-func generateBatchData(batchStart, batchCount int, createdAt time.Time) ([]string, [][]interface{}) {
-	// Step 1: Define column names as variables (for pointer-like references)
-	colID := "ID"
-	colDataValue := "DATA_VALUE"
-	colDescription := "DESCRIPTION"
-	colStatus := "STATUS"
-	colCreatedAt := "CREATED_AT"
-
-	// Step 2: Build rows using bulkinsert.Row/Column for readability and safety
-	rowsDef := make(bulkinsert.Rows, 0, batchCount)
-	for i := 0; i < batchCount; i++ {
-		rowNum := batchStart + i
-		status := "ACTIVE"
-		if rowNum%10 == 0 {
-			status = "INACTIVE"
-		}
-
-		rowsDef = append(rowsDef, bulkinsert.Row{
-			bulkinsert.Column{Name: colID, Value: rowNum},
-			bulkinsert.Column{Name: colDataValue, Value: fmt.Sprintf("VAL_%d", rowNum)},
-			bulkinsert.Column{Name: colDescription, Value: fmt.Sprintf("Generated row #%d", rowNum)},
-			bulkinsert.Column{Name: colStatus, Value: status},
-			bulkinsert.Column{Name: colCreatedAt, Value: createdAt},
-		})
-	}
-
-	// Step 3: Convert to the required return types
-	return rowsDef.GetColumnsNames(), rowsDef.GetRows()
-}
-
-// insertBulkData inserts bulk data in batches.
-// batchSize controls rows per batch; if <= 0 it falls back to a single batch of bulkCount.
-func insertBulkData(ctx context.Context, db *sqlx.DB, bulkCount int, batchSize int, createdAt time.Time) (time.Duration, error) {
-	if bulkCount <= 0 {
-		return 0, nil
-	}
-	if batchSize <= 0 || batchSize > bulkCount {
-		batchSize = bulkCount
-	}
-	log.Printf("Inserting %d rows with CREATED_AT = %s in batches of %d", bulkCount, createdAt.Format("2006-01-02 15:04:05"), batchSize)
-
-	var totalInsert time.Duration
-	startID := 1
-	remaining := bulkCount
-	batchNum := 0
-	totalBatches := (bulkCount + batchSize - 1) / batchSize
-	for remaining > 0 {
-		n := batchSize
-		if remaining < batchSize {
-			n = remaining
-		}
-		batchNum++
-
-		// Pre-batch progress log so users see ongoing work before each insert starts
-		log.Printf("Batch %d/%d: starting insert of %d rows (remaining before: %d)", batchNum, totalBatches, n, remaining)
-
-		columnNames, rows := generateBatchData(startID, n, createdAt)
-		insDuration, err := bulkinsert.InsertStructs(ctx, db, "BULK_DATA", columnNames, rows)
-		if err != nil {
-			return totalInsert, err
-		}
-		totalInsert += insDuration
-		startID += n
-		remaining -= n
-
-		log.Printf("Batch %d/%d: inserted %d rows (remaining: %d)", batchNum, totalBatches, n, remaining)
-	}
-
-	return totalInsert, nil
-}
-
 // commitTransaction commits the given transaction and returns the duration.
 func commitTransaction(tx *sql.Tx) (time.Duration, error) {
 	log.Println("Committing transaction...")
@@ -117,34 +33,6 @@ func commitTransaction(tx *sql.Tx) (time.Duration, error) {
 		return 0, fmt.Errorf("commit failed: %w", err)
 	}
 	return time.Since(commitStart), nil
-}
-
-// refreshMaterializedView refreshes the MV_BULK_DATA materialized view.
-func refreshMaterializedView(ctx context.Context, db *sqlx.DB) (time.Duration, error) {
-	log.Println("Insert committed. Refreshing MV_BULK_DATA (COMPLETE, ATOMIC) ...")
-	refreshStart := time.Now()
-
-	refreshSQL := `
-BEGIN
-  DBMS_MVIEW.REFRESH(
-    list           => 'MV_BULK_DATA',
-    method         => 'C',
-    atomic_refresh => TRUE
-  );
-END;`
-
-	result, err := db.ExecContext(ctx, refreshSQL)
-	if err != nil {
-		return 0, fmt.Errorf("refresh materialized view failed: %w", err)
-	}
-	// Check if any rows were affected
-	if result != nil {
-		rowsAffected, _ := result.RowsAffected()
-		log.Printf("Refresh result - rows affected: %d", rowsAffected)
-	}
-
-	log.Println("Refresh complete.")
-	return time.Since(refreshStart), nil
 }
 
 // queryTableStats queries and returns statistics for a given table.
@@ -222,32 +110,18 @@ func RunBulkLoadSimulation(ctx context.Context, db *sqlx.DB, bulkCount int, batc
 
 	log.Println("=== Starting bulk load simulation ===")
 
-	// Step 1: Truncate BULK_DATA table
-	if err := truncateTable(ctx, db); err != nil {
-		return err
-	}
-
-	// Step 2: Insert bulk data and commit
-	operationStart := time.Now()
-	insDuration, err := insertBulkData(ctx, db, bulkCount, batchSize, createdAt)
-	if err != nil {
-		return err
-	}
-	commitDuration := time.Since(operationStart) - insDuration
-
-	// Step 3: Refresh materialized view
-	refreshDuration, err := refreshMaterializedView(ctx, db)
+	// Execute the complete bulk load operation (truncate, insert, refresh)
+	timing, err := bulkload.ExecuteBulkLoad(ctx, db, bulkCount, batchSize, createdAt)
 	if err != nil {
 		return err
 	}
 
-	// Step 4: Print timing report
-	totalDuration := time.Since(operationStart)
+	// Print timing report
 	report := &timingReport{
-		InsertDuration:  insDuration,
-		CommitDuration:  commitDuration,
-		RefreshDuration: refreshDuration,
-		TotalDuration:   totalDuration,
+		InsertDuration:  timing.InsertDuration,
+		CommitDuration:  timing.CommitDuration,
+		RefreshDuration: timing.RefreshDuration,
+		TotalDuration:   timing.TotalDuration,
 	}
 	logTimingReport(report)
 

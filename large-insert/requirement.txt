@@ -1,0 +1,10 @@
+- opencsv file
+- validate csv
+- truncate table
+- read bulk csv send to go channel
+- consume and insert a bulk to db
+- wait for read file and insert to complete
+- Refresh oracle material view
+- Done
+
+if any state has error, exit with error

@@ -22,7 +22,7 @@ func main() {
 
 	// Build DSN
 	// We add ENABLE_OOB=true to attempt Out-Of-Band interrupts (if supported).
-	dsn := fmt.Sprintf("oracle://%s:%s@%s:%s/%s?ENABLE_OOB=true&TIMEOUT=2", *user, *pass, *host, *port, *service)
+	dsn := fmt.Sprintf("oracle://%s:%s@%s:%s/%s?ENABLE_OOB=true&TIMEOUT=3", *user, *pass, *host, *port, *service)
 
 	conn, err := sql.Open("oracle", dsn)
 	if err != nil {
@@ -42,7 +42,15 @@ func main() {
 	}()
 	execCtx, execCancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer execCancel()
-	_, err = conn.ExecContext(execCtx, "begin DBMS_LOCK.sleep(7); end;")
+
+	stmt, err := conn.PrepareContext(execCtx, "begin DBMS_SESSION.SLEEP(7); end;")
+	if err != nil {
+		fmt.Println("prepare error: ", err)
+		return
+	}
+	defer stmt.Close()
+
+	_, err = stmt.ExecContext(execCtx)
 	if err != nil {
 		fmt.Println(err)
 		return
