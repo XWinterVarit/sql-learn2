@@ -43,7 +43,14 @@ func main() {
 		colReorderLevel = "REORDER_LEVEL"
 		colTargetLevel  = "TARGET_LEVEL"
 		colDiscontinued = "DISCONTINUED"
+		colUpdatedAt    = "UPDATED_AT"
 	)
+
+	loc, err := time.LoadLocation("Asia/Bangkok")
+	if err != nil {
+		log.Fatalf("Failed to load location: %v", err)
+	}
+	runTime := time.Now().In(loc)
 
 	fmt.Println("Starting Bulk Load Example...")
 	fmt.Printf("Connecting to DB: %s (masked)\n", dbConnStr)
@@ -82,7 +89,7 @@ func main() {
 		TableName: tableName,
 		Columns: []string{
 			colID, colCode, colName, colDesc, colCategory,
-			colCost, colPrice, colReorderLevel, colTargetLevel, colDiscontinued,
+			colCost, colPrice, colReorderLevel, colTargetLevel, colDiscontinued, colUpdatedAt,
 		},
 		MVName: "MV_PRODUCT",
 		ConvertFunc: func(row []string) ([]interface{}, error) {
@@ -98,6 +105,7 @@ func main() {
 				p.NullableInt(row[11], colReorderLevel),
 				p.NullableInt(row[5], colTargetLevel),
 				p.Int(row[16], colDiscontinued),
+				runTime,
 			}
 			if err := p.Err(); err != nil {
 				return nil, err

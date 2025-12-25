@@ -29,7 +29,8 @@ CREATE TABLE PRODUCT (
     LIST_PRICE     NUMBER(10, 2) NOT NULL,
     REORDER_LEVEL  NUMBER(5),      -- Nullable
     TARGET_LEVEL   NUMBER(5),      -- Nullable
-    DISCONTINUED   NUMBER(1) DEFAULT 0 NOT NULL
+    DISCONTINUED   NUMBER(1) DEFAULT 0 NOT NULL,
+    UPDATED_AT     TIMESTAMP
 );
 
 -- Optional: Add comments or indexes if needed
