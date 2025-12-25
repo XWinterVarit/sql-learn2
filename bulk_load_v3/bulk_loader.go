@@ -26,6 +26,7 @@ type Config struct {
 	TableName string
 	Columns   []string
 	BatchSize int
+	MVName    string
 }
 
 // Source defines the interface for input data handling.
@@ -140,12 +141,17 @@ func Run(ctx context.Context, cfg Config, src Source) error {
 
 	// 4. Refresh Materialized View
 	// Diagram: Refresh Material View
-	refreshStart := time.Now()
-	if _, err := cfg.Repo.RefreshMaterializedView(ctx); err != nil {
-		logger.Error("Refresh MV failed", LogFieldErr, err)
-		return err
+	if cfg.MVName != "" {
+		logger.Info("Refreshing materialized view...", "mv", cfg.MVName)
+		refreshStart := time.Now()
+		if _, err := cfg.Repo.RefreshMaterializedView(ctx, cfg.MVName); err != nil {
+			logger.Error("Refresh MV failed", LogFieldErr, err)
+			return err
+		}
+		logger.Info("MV Refreshed", LogFieldDuration, time.Since(refreshStart))
+	} else {
+		logger.Info("No MV configured, skipping refresh.")
 	}
-	logger.Info("MV Refreshed", LogFieldDuration, time.Since(refreshStart))
 
 	// Diagram: Done Batch
 	logger.Info("Batch Done.", LogFieldDuration, time.Since(runStart))

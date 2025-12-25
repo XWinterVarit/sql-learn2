@@ -17,8 +17,8 @@ type Repository interface {
 	// BulkInsert executes the bulk insert using the provided builder.
 	BulkInsert(ctx context.Context, builder *BulkInsertBuilder) error
 
-	// RefreshMaterializedView refreshes the MV_BULK_DATA materialized view.
-	RefreshMaterializedView(ctx context.Context) (time.Duration, error)
+	// RefreshMaterializedView refreshes the specified materialized view.
+	RefreshMaterializedView(ctx context.Context, name string) (time.Duration, error)
 }
 
 // Repo implements the Repository interface.
@@ -46,28 +46,23 @@ func (r *Repo) BulkInsert(ctx context.Context, builder *BulkInsertBuilder) error
 	return err
 }
 
-// RefreshMaterializedView refreshes the MV_BULK_DATA materialized view.
-func (r *Repo) RefreshMaterializedView(ctx context.Context) (time.Duration, error) {
-	log.Println("Insert committed. Refreshing MV_BULK_DATA (COMPLETE, ATOMIC) ...")
+// RefreshMaterializedView refreshes the specified materialized view.
+func (r *Repo) RefreshMaterializedView(ctx context.Context, name string) (time.Duration, error) {
+	log.Printf("Insert committed. Refreshing MV %s (COMPLETE, ATOMIC) ...", name)
 	refreshStart := time.Now()
 
 	refreshSQL := `
 BEGIN
   DBMS_MVIEW.REFRESH(
-    list           => 'MV_BULK_DATA',
+    list           => :1,
     method         => 'C',
     atomic_refresh => TRUE
   );
 END;`
 
-	result, err := r.db.ExecContext(ctx, refreshSQL)
+	_, err := r.db.ExecContext(ctx, refreshSQL, name)
 	if err != nil {
-		return 0, fmt.Errorf("refresh materialized view failed: %w", err)
-	}
-	// Check if any rows were affected
-	if result != nil {
-		rowsAffected, _ := result.RowsAffected()
-		log.Printf("Refresh result - rows affected: %d", rowsAffected)
+		return 0, fmt.Errorf("refresh materialized view %s failed: %w", name, err)
 	}
 
 	log.Println("Refresh complete.")

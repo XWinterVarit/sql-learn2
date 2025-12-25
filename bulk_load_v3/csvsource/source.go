@@ -27,6 +27,7 @@ type Config struct {
 	TableName string
 	Columns   []string
 	BatchSize int
+	MVName    string
 }
 
 // CsvSource implements bulkloadv3.Source using the native encoding/csv package.
@@ -133,6 +134,7 @@ func (s *CsvSource) Run(ctx context.Context) error {
 		TableName: s.cfg.TableName,
 		Columns:   s.cfg.Columns,
 		BatchSize: s.cfg.BatchSize,
+		MVName:    s.cfg.MVName,
 	}
 	// Use the adapter to expose the interface methods to bulkloadv3
 	return bulkloadv3.Run(ctx, cfg, &sourceAdapter{s: s})

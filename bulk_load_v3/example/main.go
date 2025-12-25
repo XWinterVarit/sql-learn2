@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
+	"os"
 	"strconv"
 	"time"
 
@@ -16,8 +18,16 @@ import (
 // Main function demonstrating the usage of bulk_load_v3 with the csvsource helper.
 func main() {
 	// Configuration
+	user := flag.String("user", getEnv("ORA_USER", "LEARN1"), "Oracle username")
+	pass := flag.String("pass", getEnv("ORA_PASS", "Welcome"), "Oracle password")
+	host := flag.String("host", getEnv("ORA_HOST", "localhost"), "Oracle host")
+	port := flag.String("port", getEnv("ORA_PORT", "1521"), "Oracle port")
+	service := flag.String("service", getEnv("ORA_SERVICE", "XE"), "Oracle service name")
+	flag.Parse()
+
+	dbConnStr := fmt.Sprintf("oracle://%s:%s@%s:%s/%s", *user, *pass, *host, *port, *service)
+
 	const (
-		dbConnStr = "oracle://user:password@localhost:1521/service" // Update with actual connection string
 		tableName = "PRODUCT"
 		batchSize = 1000
 		csvFile   = "bulk_load_v3/example/product_data.csv"
@@ -74,6 +84,7 @@ func main() {
 			colID, colCode, colName, colDesc, colCategory,
 			colCost, colPrice, colReorderLevel, colTargetLevel, colDiscontinued,
 		},
+		MVName: "MV_PRODUCT",
 		ConvertFunc: func(row []string) ([]interface{}, error) {
 			p := &RowParser{}
 			values := []interface{}{
@@ -169,4 +180,11 @@ func (p *RowParser) NullableInt(s string, field string) interface{} {
 
 func (p *RowParser) Err() error {
 	return p.err
+}
+
+func getEnv(key, fallback string) string {
+	if value, ok := os.LookupEnv(key); ok {
+		return value
+	}
+	return fallback
 }
