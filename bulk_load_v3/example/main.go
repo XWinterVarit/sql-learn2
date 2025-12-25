@@ -29,7 +29,7 @@ func main() {
 
 	const (
 		tableName = "PRODUCT"
-		batchSize = 1000
+		batchSize = 100000
 		csvFile   = "bulk_load_v3/example/product_data.csv"
 
 		// Column constants

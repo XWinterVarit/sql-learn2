@@ -13,7 +13,7 @@ import (
 
 func main() {
 	// Command line flags
-	rowCount := flag.Int("rows", 100, "Number of rows to generate")
+	rowCount := flag.Int("rows", 1000000, "Number of rows to generate")
 	outputFile := flag.String("output", "product_data.csv", "Output CSV file path")
 	flag.Parse()
 
