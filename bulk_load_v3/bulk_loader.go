@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jmoiron/sqlx"
+	"sql-learn2/bulk_load_v3/rp_dynamic"
 )
 
 const (
@@ -22,7 +22,7 @@ const (
 
 // Config holds configuration for the bulk load operation.
 type Config struct {
-	DB        *sqlx.DB
+	Repo      rp_dynamic.Repository
 	TableName string
 	Columns   []string
 	BatchSize int
@@ -62,14 +62,14 @@ func Run(ctx context.Context, cfg Config, src Source) error {
 	// Diagram: Truncate Table
 	logger.Info("Truncating table...")
 	truncStart := time.Now()
-	if err := truncateTable(ctx, cfg.DB, cfg.TableName); err != nil {
+	if err := cfg.Repo.Truncate(ctx, cfg.TableName); err != nil {
 		return fmt.Errorf("truncate table %s failed: %w", cfg.TableName, err)
 	}
 	logger.Info("Truncate finished", LogFieldDuration, time.Since(truncStart))
 
 	// 3. Process Rows (Read loop)
 	logger.Info("Starting row processing...")
-	builder := NewBulkInsertBuilder(cfg.TableName, cfg.Columns...)
+	builder := rp_dynamic.NewBulkInsertBuilder(cfg.TableName, cfg.Columns...)
 	rowCount := 0
 	totalRows := 0
 
@@ -92,14 +92,14 @@ func Run(ctx context.Context, cfg Config, src Source) error {
 			logger.Info("Buffer full. Inserting batch...", LogFieldRowCount, rowCount, LogFieldDuration, readDuration)
 
 			flushStart := time.Now()
-			if err := flushBuffer(ctx, cfg.DB, builder); err != nil {
+			if err := cfg.Repo.BulkInsert(ctx, builder); err != nil {
 				logger.Error("Bulk insert failed", LogFieldErr, err)
 				return fmt.Errorf("bulk insert failed: %w", err)
 			}
 			logger.Info("Batch inserted", LogFieldDuration, time.Since(flushStart))
 
 			// Diagram: Reset Buffer
-			builder = NewBulkInsertBuilder(cfg.TableName, cfg.Columns...)
+			builder = rp_dynamic.NewBulkInsertBuilder(cfg.TableName, cfg.Columns...)
 			rowCount = 0
 			batchReadStart = time.Now()
 		}
@@ -129,7 +129,7 @@ func Run(ctx context.Context, cfg Config, src Source) error {
 		logger.Info("Inserting remaining rows...", LogFieldRowCount, rowCount, LogFieldDuration, readDuration)
 
 		flushStart := time.Now()
-		if err := flushBuffer(ctx, cfg.DB, builder); err != nil {
+		if err := cfg.Repo.BulkInsert(ctx, builder); err != nil {
 			logger.Error("Final bulk insert failed", LogFieldErr, err)
 			return fmt.Errorf("final bulk insert failed: %w", err)
 		}
@@ -141,7 +141,7 @@ func Run(ctx context.Context, cfg Config, src Source) error {
 	// 4. Refresh Materialized View
 	// Diagram: Refresh Material View
 	refreshStart := time.Now()
-	if _, err := refreshMaterializedView(ctx, cfg.DB); err != nil {
+	if _, err := cfg.Repo.RefreshMaterializedView(ctx); err != nil {
 		logger.Error("Refresh MV failed", LogFieldErr, err)
 		return err
 	}
@@ -150,19 +150,4 @@ func Run(ctx context.Context, cfg Config, src Source) error {
 	// Diagram: Done Batch
 	logger.Info("Batch Done.", LogFieldDuration, time.Since(runStart))
 	return nil
-}
-
-// truncateTable executes a TRUNCATE TABLE command.
-func truncateTable(ctx context.Context, db *sqlx.DB, tableName string) error {
-	query := fmt.Sprintf("TRUNCATE TABLE %s", tableName)
-	_, err := db.ExecContext(ctx, query)
-	return err
-}
-
-// flushBuffer executes the bulk insert using the builder.
-func flushBuffer(ctx context.Context, db *sqlx.DB, builder *BulkInsertBuilder) error {
-	query := builder.GetSQL()
-	args := builder.GetArgs()
-	_, err := db.ExecContext(ctx, query, args...)
-	return err
 }

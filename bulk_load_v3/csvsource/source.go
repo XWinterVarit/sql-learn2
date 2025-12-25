@@ -9,6 +9,7 @@ import (
 	"os"
 
 	"sql-learn2/bulk_load_v3"
+	"sql-learn2/bulk_load_v3/rp_dynamic"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -125,8 +126,10 @@ func (a *sourceAdapter) Convert(rawRow interface{}) ([]interface{}, error) {
 
 // Run executes the bulk load process.
 func (s *CsvSource) Run(ctx context.Context) error {
+	repo := rp_dynamic.NewRepo(s.cfg.DB)
+
 	cfg := bulkloadv3.Config{
-		DB:        s.cfg.DB,
+		Repo:      repo,
 		TableName: s.cfg.TableName,
 		Columns:   s.cfg.Columns,
 		BatchSize: s.cfg.BatchSize,

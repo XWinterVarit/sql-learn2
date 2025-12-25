@@ -1,4 +1,4 @@
-package bulkloadv3
+package rp_dynamic
 
 import (
 	"fmt"
