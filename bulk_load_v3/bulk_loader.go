@@ -47,85 +47,138 @@ type Source interface {
 	Convert(rawRow interface{}) ([]interface{}, error)
 }
 
-// Run executes the bulk load process according to the workflow defined in the diagram.
-func Run(ctx context.Context, cfg Config, src Source) (err error) {
+// Loader handles the bulk load operation.
+type Loader struct {
+	cfg    Config
+	src    Source
+	logger *slog.Logger
+}
+
+// NewLoader creates a new Loader instance.
+func NewLoader(cfg Config, src Source) *Loader {
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = 100
+		slog.Warn("BatchSize was <= 0, defaulting to 100")
+	}
+
+	logger := slog.With(LogFieldTable, cfg.TableName)
+	return &Loader{
+		cfg:    cfg,
+		src:    src,
+		logger: logger,
+	}
+}
+
+// Run executes the bulk load process.
+func (l *Loader) Run(ctx context.Context) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("panic in bulk load run: %v\nstack: %s", r, debug.Stack())
 		}
 	}()
 
-	runStart := time.Now()
-	logger := slog.With(LogFieldTable, cfg.TableName)
-	logger.Info("Starting bulk load process...")
+	if err := l.validateConfig(); err != nil {
+		return err
+	}
 
-	// 1. Validate Source
+	runStart := time.Now()
+	l.logger.Info("Starting bulk load process...")
+
+	// 1. Preparation
+	if err := l.prepare(ctx); err != nil {
+		return err
+	}
+
+	// 2. Processing
+	totalRows, err := l.process(ctx)
+	if err != nil {
+		return err
+	}
+
+	// 3. Finalization
+	if err := l.refreshMatView(ctx); err != nil {
+		return err
+	}
+
+	l.logger.Info("Batch Done.", LogFieldDuration, time.Since(runStart), LogFieldRowCount, totalRows)
+	return nil
+}
+
+func (l *Loader) validateConfig() error {
+	if l.cfg.Repo == nil {
+		return fmt.Errorf("repository (Repo) is required")
+	}
+	if l.cfg.TableName == "" {
+		return fmt.Errorf("table name is required")
+	}
+	if len(l.cfg.Columns) == 0 {
+		return fmt.Errorf("target columns are required")
+	}
+	return nil
+}
+
+// prepare handles source validation and table truncation.
+func (l *Loader) prepare(ctx context.Context) error {
 	// Diagram: Open CSV File -> Validate CSV
-	logger.Info("Validating source...")
-	if err := src.Validate(ctx); err != nil {
+	l.logger.Info("Validating source...")
+	if err := l.src.Validate(ctx); err != nil {
 		return fmt.Errorf("source validation failed: %w", err)
 	}
 
-	// 2. Truncate Table
 	// Diagram: Truncate Table
-	logger.Info("Truncating table...")
+	l.logger.Info("Truncating table...")
 	truncStart := time.Now()
-	if err := cfg.Repo.Truncate(ctx, cfg.TableName); err != nil {
-		return fmt.Errorf("truncate table %s failed: %w", cfg.TableName, err)
+	if err := l.cfg.Repo.Truncate(ctx, l.cfg.TableName); err != nil {
+		return fmt.Errorf("truncate table %s failed: %w", l.cfg.TableName, err)
 	}
-	logger.Info("Truncate finished", LogFieldDuration, time.Since(truncStart))
+	l.logger.Info("Truncate finished", LogFieldDuration, time.Since(truncStart))
+	return nil
+}
 
-	// 3. Process Rows (Read loop)
-	logger.Info("Starting row processing...")
-	builder := rp_dynamic.NewBulkInsertBuilder(cfg.TableName, cfg.Columns...)
+// process handles reading, converting, buffering, and inserting rows.
+func (l *Loader) process(ctx context.Context) (int, error) {
+	l.logger.Info("Starting row processing...")
+	builder := rp_dynamic.NewBulkInsertBuilder(l.cfg.TableName, l.cfg.Columns...)
 	rowCount := 0
 	totalRows := 0
-
 	batchReadStart := time.Now()
 
 	for {
 		// Diagram: Read Line
-		rawRow, err := src.Next(ctx)
+		rawRow, err := l.src.Next(ctx)
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("read line failed: %w", err)
+			return totalRows, fmt.Errorf("read line failed: %w", err)
 		}
 
 		// Diagram: Is Buffer Full?
-		if rowCount >= cfg.BatchSize {
+		if rowCount >= l.cfg.BatchSize {
 			// Diagram: Buffer Has Rows -> Insert Bulk
-			readDuration := time.Since(batchReadStart)
-			logger.Info("Buffer full. Inserting batch...", LogFieldRowCount, rowCount, LogFieldDuration, readDuration)
-
-			flushStart := time.Now()
-			if err := cfg.Repo.BulkInsert(ctx, builder); err != nil {
-				logger.Error("Bulk insert failed", LogFieldErr, err)
-				return fmt.Errorf("bulk insert failed: %w", err)
+			if err := l.flushBatch(ctx, builder, rowCount, time.Since(batchReadStart)); err != nil {
+				return totalRows, err
 			}
-			logger.Info("Batch inserted", LogFieldDuration, time.Since(flushStart))
-
 			// Diagram: Reset Buffer
-			builder = rp_dynamic.NewBulkInsertBuilder(cfg.TableName, cfg.Columns...)
+			builder = rp_dynamic.NewBulkInsertBuilder(l.cfg.TableName, l.cfg.Columns...)
 			rowCount = 0
 			batchReadStart = time.Now()
 		}
 
 		currentLine := totalRows + 1
-		rowLogger := logger.With(LogFieldRowIndex, currentLine)
+		rowLogger := l.logger.With(LogFieldRowIndex, currentLine)
 
 		// Diagram: Parse And Validate Row
-		values, err := src.Convert(rawRow)
+		values, err := l.src.Convert(rawRow)
 		if err != nil {
 			rowLogger.Error("Row conversion failed", LogFieldRawData, rawRow, LogFieldErr, err)
-			return fmt.Errorf("row conversion failed: %w", err)
+			return totalRows, fmt.Errorf("row conversion failed: %w", err)
 		}
 
 		// Diagram: Add Row To Buffer
 		if err := builder.AddRow(values...); err != nil {
 			rowLogger.Error("Add row to buffer failed", LogFieldRawData, rawRow, LogFieldErr, err)
-			return fmt.Errorf("add row to buffer failed: %w", err)
+			return totalRows, fmt.Errorf("add row to buffer failed: %w", err)
 		}
 		rowCount++
 		totalRows++
@@ -133,34 +186,49 @@ func Run(ctx context.Context, cfg Config, src Source) (err error) {
 
 	// Diagram: Done -> Buffer Has Rows? -> Insert Bulk
 	if rowCount > 0 {
-		readDuration := time.Since(batchReadStart)
-		logger.Info("Inserting remaining rows...", LogFieldRowCount, rowCount, LogFieldDuration, readDuration)
-
-		flushStart := time.Now()
-		if err := cfg.Repo.BulkInsert(ctx, builder); err != nil {
-			logger.Error("Final bulk insert failed", LogFieldErr, err)
-			return fmt.Errorf("final bulk insert failed: %w", err)
+		l.logger.Info("Inserting remaining rows...", LogFieldRowCount, rowCount, LogFieldDuration, time.Since(batchReadStart))
+		if err := l.flushBatch(ctx, builder, rowCount, time.Since(batchReadStart)); err != nil {
+			l.logger.Error("Final bulk insert failed", LogFieldErr, err)
+			return totalRows, fmt.Errorf("final bulk insert failed: %w", err)
 		}
-		logger.Info("Final batch inserted", LogFieldDuration, time.Since(flushStart))
 	}
 
-	logger.Info("Inserted total rows.", LogFieldRowCount, totalRows)
+	l.logger.Info("Inserted total rows.", LogFieldRowCount, totalRows)
+	return totalRows, nil
+}
 
-	// 4. Refresh Materialized View
+// flushBatch inserts the current buffer into the database.
+func (l *Loader) flushBatch(ctx context.Context, builder *rp_dynamic.BulkInsertBuilder, count int, readDuration time.Duration) error {
+	l.logger.Info("Inserting batch...", LogFieldRowCount, count, LogFieldDuration, readDuration)
+	flushStart := time.Now()
+	if err := l.cfg.Repo.BulkInsert(ctx, builder); err != nil {
+		l.logger.Error("Bulk insert failed", LogFieldErr, err)
+		return fmt.Errorf("bulk insert failed: %w", err)
+	}
+	l.logger.Info("Batch inserted", LogFieldDuration, time.Since(flushStart))
+	return nil
+}
+
+// refreshMatView handles materialized view refresh.
+func (l *Loader) refreshMatView(ctx context.Context) error {
 	// Diagram: Refresh Material View
-	if cfg.MVName != "" {
-		logger.Info("Refreshing materialized view...", "mv", cfg.MVName)
+	if l.cfg.MVName != "" {
+		l.logger.Info("Refreshing materialized view...", "mv", l.cfg.MVName)
 		refreshStart := time.Now()
-		if _, err := cfg.Repo.RefreshMaterializedView(ctx, cfg.MVName); err != nil {
-			logger.Error("Refresh MV failed", LogFieldErr, err)
+		if _, err := l.cfg.Repo.RefreshMaterializedView(ctx, l.cfg.MVName); err != nil {
+			l.logger.Error("Refresh MV failed", LogFieldErr, err)
 			return err
 		}
-		logger.Info("MV Refreshed", LogFieldDuration, time.Since(refreshStart))
+		l.logger.Info("MV Refreshed", LogFieldDuration, time.Since(refreshStart))
 	} else {
-		logger.Info("No MV configured, skipping refresh.")
+		l.logger.Info("No MV configured, skipping refresh.")
 	}
-
-	// Diagram: Done Batch
-	logger.Info("Batch Done.", LogFieldDuration, time.Since(runStart))
 	return nil
+}
+
+// Run executes the bulk load process according to the workflow defined in the diagram.
+// This is a helper function that delegates to Loader.
+func Run(ctx context.Context, cfg Config, src Source) error {
+	loader := NewLoader(cfg, src)
+	return loader.Run(ctx)
 }
