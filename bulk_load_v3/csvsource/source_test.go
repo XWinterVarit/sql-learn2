@@ -11,8 +11,8 @@ import (
 	"testing"
 )
 
-// Helper to create a temp CSV file
-func createTempCSV(t *testing.T, content [][]string) string {
+// Helper to create a temp CSV file with specific delimiter
+func createTempCSVWithDelimiter(t *testing.T, content [][]string, delimiter rune) string {
 	dir := t.TempDir()
 	filePath := filepath.Join(dir, "test.csv")
 	f, err := os.Create(filePath)
@@ -22,6 +22,9 @@ func createTempCSV(t *testing.T, content [][]string) string {
 	defer f.Close()
 
 	w := csv.NewWriter(f)
+	if delimiter != 0 {
+		w.Comma = delimiter
+	}
 	if err := w.WriteAll(content); err != nil {
 		t.Fatalf("failed to write csv content: %v", err)
 	}
@@ -29,10 +32,16 @@ func createTempCSV(t *testing.T, content [][]string) string {
 	return filePath
 }
 
+// Helper to create a temp CSV file (default comma)
+func createTempCSV(t *testing.T, content [][]string) string {
+	return createTempCSVWithDelimiter(t, content, 0)
+}
+
 func TestValidate(t *testing.T) {
 	tests := []struct {
 		name            string
 		content         [][]string
+		delimiter       rune
 		expectedCount   int
 		expectedHeaders map[int]string
 		expectError     bool
@@ -44,6 +53,17 @@ func TestValidate(t *testing.T) {
 				{"ID", "NAME"},
 				{"1", "Alice"},
 			},
+			expectedCount:   2,
+			expectedHeaders: map[int]string{0: "ID", 1: "NAME"},
+			expectError:     false,
+		},
+		{
+			name: "Success Custom Delimiter",
+			content: [][]string{
+				{"ID", "NAME"},
+				{"1", "Alice"},
+			},
+			delimiter:       '|',
 			expectedCount:   2,
 			expectedHeaders: map[int]string{0: "ID", 1: "NAME"},
 			expectError:     false,
@@ -97,7 +117,7 @@ func TestValidate(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var filePath string
 			if tt.content != nil {
-				filePath = createTempCSV(t, tt.content)
+				filePath = createTempCSVWithDelimiter(t, tt.content, tt.delimiter)
 			} else {
 				filePath = "non_existent_file.csv"
 			}
@@ -106,6 +126,7 @@ func TestValidate(t *testing.T) {
 				FilePath:            filePath,
 				ExpectedHeaderCount: tt.expectedCount,
 				ExpectedHeaders:     tt.expectedHeaders,
+				Delimiter:           tt.delimiter,
 				TableName:           "TEST_TABLE", // Required for logging
 			}
 			src, closer := New(cfg)

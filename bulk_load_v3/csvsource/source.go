@@ -20,6 +20,7 @@ type Config struct {
 	FilePath            string
 	ExpectedHeaderCount int
 	ExpectedHeaders     map[int]string
+	Delimiter           rune // Custom delimiter (default is comma)
 	// ConvertFunc is called to convert a CSV record to database values.
 	ConvertFunc func(row []string) ([]interface{}, error)
 
@@ -70,6 +71,9 @@ func (a *sourceAdapter) Validate(ctx context.Context) error {
 	a.file = f
 
 	a.reader = csv.NewReader(f)
+	if a.cfg.Delimiter != 0 {
+		a.reader.Comma = a.cfg.Delimiter
+	}
 	// Enforce that all records have the same number of fields as the first record (header).
 	a.reader.FieldsPerRecord = 0
 
