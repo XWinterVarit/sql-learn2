@@ -44,34 +44,41 @@ func New(cfg Config) (*CsvSource, func() error) {
 	return src, src.Close
 }
 
+// sourceAdapter adapts CsvSource to the bulkloadv3.Source interface.
+// It directly implements the logic for Validate, Next, and Convert,
+// operating on the underlying CsvSource state.
+type sourceAdapter struct {
+	s *CsvSource
+}
+
 // Validate opens the CSV file and validates the header count and names.
-func (s *CsvSource) Validate(ctx context.Context) error {
-	slog.Info("Opening CSV for validation", "file", s.cfg.FilePath, bulkloadv3.LogFieldTable, s.cfg.TableName)
+func (a *sourceAdapter) Validate(ctx context.Context) error {
+	slog.Info("Opening CSV for validation", bulkloadv3.LogFieldFile, a.s.cfg.FilePath, bulkloadv3.LogFieldTable, a.s.cfg.TableName)
 
-	f, err := os.Open(s.cfg.FilePath)
+	f, err := os.Open(a.s.cfg.FilePath)
 	if err != nil {
-		return fmt.Errorf("failed to open file %s: %w", s.cfg.FilePath, err)
+		return fmt.Errorf("failed to open file %s: %w", a.s.cfg.FilePath, err)
 	}
-	s.file = f
+	a.s.file = f
 
-	s.reader = csv.NewReader(f)
+	a.s.reader = csv.NewReader(f)
 	// Enforce that all records have the same number of fields as the first record (header).
-	s.reader.FieldsPerRecord = 0
+	a.s.reader.FieldsPerRecord = 0
 
 	// 1. Read and Validate Header
-	header, err := s.reader.Read()
+	header, err := a.s.reader.Read()
 	if err != nil {
-		return fmt.Errorf("failed to read header from %s: %w", s.cfg.FilePath, err)
+		return fmt.Errorf("failed to read header from %s: %w", a.s.cfg.FilePath, err)
 	}
 
-	if s.cfg.ExpectedHeaderCount > 0 {
-		if len(header) != s.cfg.ExpectedHeaderCount {
-			return fmt.Errorf("header count mismatch: got %d, want %d", len(header), s.cfg.ExpectedHeaderCount)
+	if a.s.cfg.ExpectedHeaderCount > 0 {
+		if len(header) != a.s.cfg.ExpectedHeaderCount {
+			return fmt.Errorf("header count mismatch: got %d, want %d", len(header), a.s.cfg.ExpectedHeaderCount)
 		}
 	}
 
-	if len(s.cfg.ExpectedHeaders) > 0 {
-		for index, expectedName := range s.cfg.ExpectedHeaders {
+	if len(a.s.cfg.ExpectedHeaders) > 0 {
+		for index, expectedName := range a.s.cfg.ExpectedHeaders {
 			if index < 0 || index >= len(header) {
 				return fmt.Errorf("expected header index %d is out of bounds (header length: %d)", index, len(header))
 			}
@@ -81,39 +88,39 @@ func (s *CsvSource) Validate(ctx context.Context) error {
 		}
 	}
 
-	slog.Info("CSV validation successful", "file", s.cfg.FilePath, bulkloadv3.LogFieldTable, s.cfg.TableName)
+	slog.Info("CSV validation successful", bulkloadv3.LogFieldFile, a.s.cfg.FilePath, bulkloadv3.LogFieldTable, a.s.cfg.TableName)
 	return nil
 }
 
 // Next reads the next data row from the CSV.
-func (s *CsvSource) Next(ctx context.Context) (interface{}, error) {
-	if s.reader == nil {
+func (a *sourceAdapter) Next(ctx context.Context) (interface{}, error) {
+	if a.s.reader == nil {
 		return nil, fmt.Errorf("reader not initialized (call Validate first)")
 	}
 	// Read the next record
-	record, err := s.reader.Read()
+	record, err := a.s.reader.Read()
 	if err == io.EOF {
 		return nil, io.EOF
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read csv %s failed: %w", s.cfg.FilePath, err)
+		return nil, fmt.Errorf("read csv %s failed: %w", a.s.cfg.FilePath, err)
 	}
 
 	return record, nil
 }
 
 // Convert transforms the raw CSV record ([]string) into DB values.
-func (s *CsvSource) Convert(rawRow interface{}) ([]interface{}, error) {
+func (a *sourceAdapter) Convert(rawRow interface{}) ([]interface{}, error) {
 	row, ok := rawRow.([]string)
 	if !ok {
 		return nil, fmt.Errorf("expected []string, got %T", rawRow)
 	}
 
-	if s.cfg.ConvertFunc == nil {
+	if a.s.cfg.ConvertFunc == nil {
 		return nil, fmt.Errorf("ConvertFunc is required")
 	}
 
-	return s.cfg.ConvertFunc(row)
+	return a.s.cfg.ConvertFunc(row)
 }
 
 // Run executes the bulk load process.
@@ -124,7 +131,8 @@ func (s *CsvSource) Run(ctx context.Context) error {
 		Columns:   s.cfg.Columns,
 		BatchSize: s.cfg.BatchSize,
 	}
-	return bulkloadv3.Run(ctx, cfg, s)
+	// Use the adapter to expose the interface methods to bulkloadv3
+	return bulkloadv3.Run(ctx, cfg, &sourceAdapter{s: s})
 }
 
 // Close closes the underlying file handle.

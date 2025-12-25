@@ -17,6 +17,7 @@ const (
 	LogFieldErr      = "error"
 	LogFieldDuration = "duration"
 	LogFieldRowCount = "row_count"
+	LogFieldFile     = "file"
 )
 
 // Config holds configuration for the bulk load operation.
