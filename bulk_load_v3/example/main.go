@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"time"
 
 	"sql-learn2/bulk_load_v3/csvsource"
@@ -93,7 +92,7 @@ func main() {
 		},
 		MVName: "MV_PRODUCT",
 		ConvertFunc: func(row []string) ([]interface{}, error) {
-			p := &RowParser{}
+			p := csvsource.NewRowParser()
 			values := []interface{}{
 				p.Int(row[2], colID),
 				p.String(row[4], colCode),
@@ -123,71 +122,6 @@ func main() {
 	}
 
 	log.Printf("Bulk load completed in %v", time.Since(start))
-}
-
-// RowParser helps simplify row conversion by collecting errors.
-type RowParser struct {
-	err error
-}
-
-func (p *RowParser) Int(s string, field string) interface{} {
-	if p.err != nil {
-		return nil
-	}
-	val, err := strconv.Atoi(s)
-	if err != nil {
-		p.err = fmt.Errorf("invalid %s '%s': %w", field, s, err)
-		return nil
-	}
-	return val
-}
-
-func (p *RowParser) Float64(s string, field string) interface{} {
-	if p.err != nil {
-		return nil
-	}
-	val, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		p.err = fmt.Errorf("invalid %s '%s': %w", field, s, err)
-		return nil
-	}
-	return val
-}
-
-func (p *RowParser) String(s string, field string) interface{} {
-	if p.err != nil {
-		return nil
-	}
-	return s
-}
-
-func (p *RowParser) NullableString(s string, field string) interface{} {
-	if p.err != nil {
-		return nil
-	}
-	if s == "" {
-		return nil
-	}
-	return s
-}
-
-func (p *RowParser) NullableInt(s string, field string) interface{} {
-	if p.err != nil {
-		return nil
-	}
-	if s == "" {
-		return nil
-	}
-	val, err := strconv.Atoi(s)
-	if err != nil {
-		p.err = fmt.Errorf("invalid %s '%s': %w", field, s, err)
-		return nil
-	}
-	return val
-}
-
-func (p *RowParser) Err() error {
-	return p.err
 }
 
 func getEnv(key, fallback string) string {
