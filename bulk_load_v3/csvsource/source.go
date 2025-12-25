@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"runtime/debug"
 
 	"sql-learn2/bulk_load_v3"
 	"sql-learn2/bulk_load_v3/rp_dynamic"
@@ -126,7 +127,13 @@ func (a *sourceAdapter) Convert(rawRow interface{}) ([]interface{}, error) {
 }
 
 // Run executes the bulk load process.
-func (s *CsvSource) Run(ctx context.Context) error {
+func (s *CsvSource) Run(ctx context.Context) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in csv source run: %v\nstack: %s", r, debug.Stack())
+		}
+	}()
+
 	repo := rp_dynamic.NewRepo(s.cfg.DB)
 
 	cfg := bulkloadv3.Config{

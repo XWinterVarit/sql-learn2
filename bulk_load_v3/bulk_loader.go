@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"runtime/debug"
 	"time"
 
 	"sql-learn2/bulk_load_v3/rp_dynamic"
@@ -47,7 +48,13 @@ type Source interface {
 }
 
 // Run executes the bulk load process according to the workflow defined in the diagram.
-func Run(ctx context.Context, cfg Config, src Source) error {
+func Run(ctx context.Context, cfg Config, src Source) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic in bulk load run: %v\nstack: %s", r, debug.Stack())
+		}
+	}()
+
 	runStart := time.Now()
 	logger := slog.With(LogFieldTable, cfg.TableName)
 	logger.Info("Starting bulk load process...")
