@@ -70,47 +70,25 @@ func main() {
 	src, closer := csvsource.New(csvsource.Config{
 		FilePath:            csvFile,
 		ExpectedHeaderCount: 20, // We generated 20 columns
-		ExpectedHeaders: map[int]string{
-			2:  "ID",
-			4:  "CODE",
-			7:  "NAME",
-			1:  "DESCRIPTION",
-			13: "CATEGORY",
-			18: "COST",
-			9:  "PRICE",
-			11: "REORDER_LEVEL",
-			5:  "TARGET_LEVEL",
-			16: "DISCONTINUED",
-		},
-		BatchSize: batchSize,
-
-		DB:        db,
-		TableName: tableName,
-		Columns: []string{
-			colID, colCode, colName, colDesc, colCategory,
-			colCost, colPrice, colReorderLevel, colTargetLevel, colDiscontinued, colUpdatedAt,
+		BatchSize:           batchSize,
+		DB:                  db,
+		TableName:           tableName,
+		Parsers: []csvsource.Parser{
+			{DBColumn: colID, CSVHeader: "ID", ParserFunc: csvsource.ParseInt},
+			{DBColumn: colCode, CSVHeader: "CODE", ParserFunc: csvsource.ParseString},
+			{DBColumn: colName, CSVHeader: "NAME", ParserFunc: csvsource.ParseString},
+			{DBColumn: colDesc, CSVHeader: "DESCRIPTION", ParserFunc: csvsource.ParseNullableString},
+			{DBColumn: colCategory, CSVHeader: "CATEGORY", ParserFunc: csvsource.ParseString},
+			{DBColumn: colCost, CSVHeader: "COST", ParserFunc: csvsource.ParseFloat},
+			{DBColumn: colPrice, CSVHeader: "PRICE", ParserFunc: csvsource.ParseFloat},
+			{DBColumn: colReorderLevel, CSVHeader: "REORDER_LEVEL", ParserFunc: csvsource.ParseNullableInt},
+			{DBColumn: colTargetLevel, CSVHeader: "TARGET_LEVEL", ParserFunc: csvsource.ParseNullableInt},
+			{DBColumn: colDiscontinued, CSVHeader: "DISCONTINUED", ParserFunc: csvsource.ParseInt},
+			{DBColumn: colUpdatedAt, CSVHeader: "", ParserFunc: func(_ string) (interface{}, error) {
+				return runTime, nil
+			}},
 		},
 		MVName: "MV_PRODUCT",
-		ConvertFunc: func(row []string) ([]interface{}, error) {
-			p := csvsource.NewRowParser()
-			values := []interface{}{
-				p.Int(row[2], colID),
-				p.String(row[4], colCode),
-				p.String(row[7], colName),
-				p.NullableString(row[1], colDesc),
-				p.String(row[13], colCategory),
-				p.Float64(row[18], colCost),
-				p.Float64(row[9], colPrice),
-				p.NullableInt(row[11], colReorderLevel),
-				p.NullableInt(row[5], colTargetLevel),
-				p.Int(row[16], colDiscontinued),
-				runTime,
-			}
-			if err := p.Err(); err != nil {
-				return nil, err
-			}
-			return values, nil
-		},
 	})
 	defer closer()
 
